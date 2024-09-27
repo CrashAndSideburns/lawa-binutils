@@ -1,6 +1,5 @@
 use miette::{IntoDiagnostic, LabeledSpan, Result, SourceSpan, WrapErr};
 use strum::{Display, EnumString};
-use unicode_ident;
 
 use std::error::Error;
 use std::fmt;
@@ -315,7 +314,7 @@ impl<'a> Iterator for Lexer<'a> {
                     // closing `"` character, so we examine `unlexed` with the beginning `"`
                     // trimmed off. As a result, we must add 2 to the returned index for it to
                     // actually point to the first character after the end of the string literal.
-                    let end_index = match self.unlexed[1..].find(|c| c == '"') {
+                    let end_index = match self.unlexed[1..].find('"') {
                         Some(i) => i + 2,
                         None => {
                             self.errored = true;
@@ -427,7 +426,7 @@ impl<'a> Iterator for Lexer<'a> {
 }
 
 // Given a slice which refers to a string literal, unescape it.
-fn unescape<'a>(string_literal: &'a str) -> &'a str {
+fn unescape(string_literal: &str) -> &str {
     // TODO: Support proper unescaping. For now, we just trim off the quotation marks.
-    return &string_literal[1..string_literal.len() - 1];
+    &string_literal[1..string_literal.len() - 1]
 }
