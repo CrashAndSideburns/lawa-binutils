@@ -1,4 +1,4 @@
-use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, SegmentPermissions, TokenKind};
+use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, TokenKind};
 
 use miette::{LabeledSpan, Result};
 
@@ -20,7 +20,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse(mut self) -> Result<Program<'a>> {
         let mut exports = Vec::new();
-        let mut segments = Vec::new();
+        let mut segments = [const { Vec::new() }; 8];
 
         loop {
             // Consume a LeftParen. If there are no more tokens to be consumed, we have finished
@@ -134,7 +134,6 @@ impl<'a> Parser<'a> {
 
             // We're now in the body of a segment. At this point, we just parse Code until we see a
             // RightParen, at which point we have parsed the entire segment.
-            let mut contents = Vec::new();
             loop {
                 match self.lexer.peek() {
                     Some(token) => {
@@ -154,7 +153,7 @@ impl<'a> Parser<'a> {
                             self.lexer.next();
                             break;
                         } else {
-                            contents.push(self.parse_code()?);
+                            segments[usize::from(permissions)].push(self.parse_code()?);
                         }
                     }
                     None => {
@@ -169,11 +168,6 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-
-            segments.push(Segment {
-                permissions,
-                contents,
-            });
         }
 
         // Everything has been parsed. Return the parsed program.
@@ -427,13 +421,7 @@ impl<'a> Parser<'a> {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Program<'a> {
     exports: Vec<&'a str>,
-    segments: Vec<Segment<'a>>,
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct Segment<'a> {
-    permissions: SegmentPermissions,
-    contents: Vec<Code<'a>>,
+    segments: [Vec<Code<'a>>; 8],
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

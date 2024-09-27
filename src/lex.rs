@@ -146,6 +146,14 @@ pub struct SegmentPermissions {
     executable: bool,
 }
 
+impl From<SegmentPermissions> for usize {
+    fn from(segment_permissions: SegmentPermissions) -> Self {
+        (segment_permissions.executable as usize)
+            | ((segment_permissions.writable as usize) << 1)
+            | ((segment_permissions.readable as usize) << 2)
+    }
+}
+
 impl FromStr for SegmentPermissions {
     type Err = ParseSegmentPermissionsError;
 
