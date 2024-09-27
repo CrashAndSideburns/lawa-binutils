@@ -1,10 +1,11 @@
 use miette::{IntoDiagnostic, LabeledSpan, Result, SourceSpan, WrapErr};
-use strum::EnumString;
+use strum::{Display, EnumString};
 use unicode_ident;
 
 use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
+use std::string::ToString;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EnumString)]
 #[strum(ascii_case_insensitive)]
@@ -169,7 +170,7 @@ impl FromStr for SegmentPermissions {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Display)]
 pub enum TokenKind<'a> {
     // Labels.
     Label(&'a str),

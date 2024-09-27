@@ -1,19 +1,19 @@
 use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, SegmentPermissions, TokenKind};
 
-use miette::{Result};
+use miette::{LabeledSpan, Result};
 
 use std::iter::Peekable;
 
 #[derive(Debug)]
 pub struct Parser<'a> {
-    // source: &'a str,
+    source: &'a str,
     pub lexer: Peekable<Lexer<'a>>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
-            // source,
+            source,
             lexer: Lexer::new(source).peekable(),
         }
     }
@@ -23,57 +23,134 @@ impl<'a> Parser<'a> {
         let mut segments = Vec::new();
 
         loop {
-            if self.lexer.next().is_none() {
-                break;
-            }
-            // token should be a LeftParen, too lazy to check
+            // Consume a LeftParen. If there are no more tokens to be consumed, we have finished
+            // parsing the entire source.
+            let token = self.lexer.next();
+            let opening_parenthesis = match token {
+                Some(token) => {
+                    let token = token?;
 
-            match self.lexer.next() {
-                Some(token) => match token?.token_kind {
-                    TokenKind::Export => { loop {
-                        match self.lexer.next() {
-                            Some(token) => {
-                                if token.as_ref().unwrap().token_kind == TokenKind::RightParen {
-                                    break;
-                                } else if let TokenKind::Label(label) = token.as_ref().unwrap().token_kind {
-                                    exports.push(label);
-                                }
-                            }
-                            None => {
-                                panic!("block was not closed with parenthesis")
-                            }
+                    match token.token_kind {
+                        TokenKind::LeftParen => token,
+                        other => {
+                            return Err(miette::miette!(
+                                labels = vec![LabeledSpan::underline(token.source_span)],
+                                "expected left parenthesis, found {other} instead",
+                            )
+                            .with_source_code(self.source.to_string()))
                         }
                     }
-                    continue;
-                    },
-                    TokenKind::Segment => {}
-                    other => {
-                        panic!("expected export or segment, found {:?}", other)
+                }
+                None => break,
+            };
+
+            // The next token should either be an Export or a Segment. If it's an Export, we parse
+            // out the export statement here. If it's a Segment, we fall through.
+            match self.lexer.next() {
+                Some(token) => {
+                    let token = token?;
+                    match token.token_kind {
+                        TokenKind::Export => {
+                            loop {
+                                match self.lexer.next() {
+                                    Some(token) => {
+                                        let token = token?;
+
+                                        match token.token_kind {
+                                            TokenKind::RightParen => break,
+                                            TokenKind::Label(label) => {
+                                                exports.push(label);
+                                            }
+                                            other => {
+                                                return Err(miette::miette!(
+                                                    labels = vec![LabeledSpan::underline(
+                                                        token.source_span
+                                                    )],
+                                                    "expected label, found {other} instead",
+                                                )
+                                                .with_source_code(self.source.to_string()));
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        return Err(miette::miette!(
+                                            labels = vec![LabeledSpan::at(
+                                                opening_parenthesis.source_span,
+                                                "unpaired opening parenthesis"
+                                            )],
+                                            "expected right parenthesis, found EOF instead",
+                                        )
+                                        .with_source_code(self.source.to_string()));
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        TokenKind::Segment => {}
+                        other => {
+                            return Err(miette::miette!(
+                                labels = vec![LabeledSpan::underline(token.source_span)],
+                                "expected export or segment, found {other} instead",
+                            )
+                            .with_source_code(self.source.to_string()));
+                        }
                     }
-                },
+                }
                 None => {
-                    panic!("expected export or segment, but lexer was empty")
+                    return Err(miette::miette!(
+                        "expected export or segment, found EOF instead",
+                    ));
                 }
             };
 
+            // If we fell through to here, we read a Segment token in the previous step, so next we
+            // parse out the segment's permissions.
             let permissions = match self.lexer.next() {
                 Some(token) => {
-                    if let TokenKind::SegmentPermissions(permissions) = token?.token_kind {
+                    let token = token?;
+
+                    if let TokenKind::SegmentPermissions(permissions) = token.token_kind {
                         permissions
                     } else {
-                        panic!("did not give permissions to segment")
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::underline(token.source_span)],
+                            "expected segment permissions, found {0} instead",
+                            token.token_kind
+                        )
+                        .with_source_code(self.source.to_string()));
                     }
                 }
                 None => {
-                    panic!("block was not closed with parenthesis")
+                    return Err(miette::miette!(
+                        labels = vec![LabeledSpan::at(
+                            opening_parenthesis.source_span,
+                            "unpaired opening parenthesis"
+                        )],
+                        "expected right parenthesis, found EOF instead",
+                    )
+                    .with_source_code(self.source.to_string()));
                 }
             };
 
+            // We're now in the body of a segment. At this point, we just parse Code until we see a
+            // RightParen, at which point we have parsed the entire segment.
             let mut contents = Vec::new();
             loop {
                 match self.lexer.peek() {
                     Some(token) => {
-                        if token.as_ref().unwrap().token_kind == TokenKind::RightParen {
+                        // HACK: I need to do kind of an awkward dance here. The errors from
+                        // `miette` are not `Clone`, so if the next token in the iterator is an
+                        // error, I need to actually take the error out of the iterator, since I
+                        // can't clone. The `unwrap` is infallible, since we have just confirmed
+                        // that the lexer is non-empty by `peek`ing at it.
+                        let token = match token {
+                            Ok(token) => token,
+                            Err(_) => &self.lexer.next().unwrap()?,
+                        };
+
+                        if token.token_kind == TokenKind::RightParen {
+                            // Remember to consume the RightParen, since here we've only `peek`ed
+                            // at it!
                             self.lexer.next();
                             break;
                         } else {
@@ -81,7 +158,14 @@ impl<'a> Parser<'a> {
                         }
                     }
                     None => {
-                        panic!("block was not closed with parenthesis")
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::at(
+                                opening_parenthesis.source_span,
+                                "unpaired opening parenthesis"
+                            )],
+                            "expected right parenthesis, found EOF instead",
+                        )
+                        .with_source_code(self.source.to_string()));
                     }
                 }
             }
@@ -92,168 +176,212 @@ impl<'a> Parser<'a> {
             });
         }
 
-        // TODO: Actually parse shit lmao
-
+        // Everything has been parsed. Return the parsed program.
         Ok(Program { exports, segments })
     }
 
-    pub fn parse_code(&mut self) -> Result<Code<'a>> {
+    pub fn parse_register(&mut self) -> Result<Register> {
         match self.lexer.next() {
-            Some(token) => match token?.token_kind {
-                TokenKind::String(string) => return Ok(Code::String(string)),
-                TokenKind::Number(n) => return Ok(Code::Number(n)),
-                TokenKind::LeftParen => {}
-                other => {
-                    panic!("expected code, found {:?}", other)
+            Some(token) => {
+                let token = token?;
+
+                match token.token_kind {
+                    TokenKind::Register(register) => Ok(register),
+                    other => Err(miette::miette!(
+                        labels = vec![LabeledSpan::underline(token.source_span)],
+                        "expected register, found {other} instead",
+                    )
+                    .with_source_code(self.source.to_string())),
                 }
-            },
+            }
+            None => Err(miette::miette!("expected register, found EOF instead")),
+        }
+    }
+
+    pub fn parse_control_status_register(&mut self) -> Result<ControlStatusRegister> {
+        match self.lexer.next() {
+            Some(token) => {
+                let token = token?;
+
+                match token.token_kind {
+                    TokenKind::ControlStatusRegister(control_status_register) => {
+                        Ok(control_status_register)
+                    }
+                    other => Err(miette::miette!(
+                        labels = vec![LabeledSpan::underline(token.source_span)],
+                        "expected control/status register, found {other} instead",
+                    )
+                    .with_source_code(self.source.to_string())),
+                }
+            }
+            None => Err(miette::miette!(
+                "expected control/status register, found EOF instead"
+            )),
+        }
+    }
+
+    pub fn parse_code(&mut self) -> Result<Code<'a>> {
+        // The first token may either be a literal, in which case the code is just the literal, or
+        // a LeftParen, in which case we have begun either an instruction or a block. Either way,
+        // we fall through.
+        let opening_parenthesis = match self.lexer.next() {
+            Some(token) => {
+                let token = token?;
+                match token.token_kind {
+                    TokenKind::String(string) => return Ok(Code::String(string)),
+                    TokenKind::Number(n) => return Ok(Code::Number(n)),
+                    TokenKind::LeftParen => token,
+                    other => {
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::underline(token.source_span)],
+                            "expected literal or left parenthesis, found {other} instead",
+                        )
+                        .with_source_code(self.source.to_string()));
+                    }
+                }
+            }
             None => {
-                panic!("expected code, but lexer was empty")
+                // NOTE: The reason why this is unreachable is a bit weird. `parse_code` is only
+                // called by `parse`, which will only call it after first peeking at the lexer and
+                // seeing that it is non-empty. As a result, `parse_code` is *currently* never
+                // called with an empty lexer, and so this is unreachable. Of course, changes to
+                // the grammar or the parser could very easily change this in the future.
+                unreachable!();
             }
         };
 
         match self.lexer.next() {
-            Some(token) => match token?.token_kind {
-                TokenKind::Opcode(opcode) => match opcode {
-                    Opcode::JSH => {
-                        let imm = self.parse_immediate()?;
-                        self.lexer.next();
-                        return Ok(Code::JSH { imm });
+            Some(token) => {
+                let token = token?;
+                match token.token_kind {
+                    TokenKind::Opcode(opcode) => {
+                        let code = match opcode {
+                            Opcode::JSH => {
+                                let imm = self.parse_immediate()?;
+                                Ok(Code::JSH { imm })
+                            }
+                            Opcode::WCSR => {
+                                let dst = self.parse_control_status_register()?;
+                                let src = self.parse_register()?;
+
+                                Ok(Code::WCSR { src, dst })
+                            }
+                            Opcode::RCSR => {
+                                let dst = self.parse_register()?;
+                                let src = self.parse_control_status_register()?;
+
+                                Ok(Code::RCSR { src, dst })
+                            }
+                            _ if opcode.takes_immediate() => {
+                                let dst = self.parse_register()?;
+                                let src = self.parse_register()?;
+                                let imm = self.parse_immediate()?;
+
+                                Ok(Code::ImmediateInstruction {
+                                    opcode,
+                                    imm,
+                                    src,
+                                    dst,
+                                })
+                            }
+                            _ => {
+                                let dst = self.parse_register()?;
+                                let src = self.parse_register()?;
+
+                                Ok(Code::Instruction { opcode, src, dst })
+                            }
+                        };
+
+                        // Check that we have the appropriate terminating RightParen.
+                        match self.lexer.next() {
+                            Some(token) => {
+                                let token = token?;
+                                match token.token_kind {
+                                    TokenKind::RightParen => {}
+                                    other => {
+                                        return Err(miette::miette!(
+                                            labels = vec![
+                                                LabeledSpan::at(
+                                                    opening_parenthesis.source_span,
+                                                    "unpaired opening parenthesis"
+                                                ),
+                                                LabeledSpan::at(
+                                                    token.source_span,
+                                                    "expected right parenthesis here"
+                                                )
+                                            ],
+                                            "expected right parenthesis, found {other} instead",
+                                        )
+                                        .with_source_code(self.source.to_string()));
+                                    }
+                                }
+                            }
+                            None => {
+                                return Err(miette::miette!(
+                                    labels = vec![LabeledSpan::at(
+                                        opening_parenthesis.source_span,
+                                        "unpaired opening parenthesis"
+                                    )],
+                                    "expected right parenthesis, found EOF instead",
+                                )
+                                .with_source_code(self.source.to_string()));
+                            }
+                        }
+
+                        return code;
                     }
-                    Opcode::WCSR => {
-                        let dst = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::ControlStatusRegister(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give anything to an immediate opcode");
-                        };
-
-                        let src = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a second register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give a second anything to an immediate opcode");
-                        };
-
-                        self.lexer.next();
-                        return Ok(Code::WCSR { src, dst });
+                    TokenKind::Block => {}
+                    other => {
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::underline(token.source_span)],
+                            "expected immediate, found {other} instead",
+                        )
+                        .with_source_code(self.source.to_string()))
                     }
-                    Opcode::RCSR => {
-                        let dst = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give anything to an immediate opcode");
-                        };
-
-                        let src = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::ControlStatusRegister(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a second register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give a second anything to an immediate opcode");
-                        };
-
-                        self.lexer.next();
-                        return Ok(Code::RCSR { src, dst });
-                    }
-                    _ if opcode.takes_immediate() => {
-                        let dst = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give anything to an immediate opcode");
-                        };
-
-                        let src = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a second register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give a second anything to an immediate opcode");
-                        };
-
-                        let imm = self.parse_immediate()?;
-                        self.lexer.next();
-                        return Ok(Code::ImmediateInstruction {
-                            opcode,
-                            imm,
-                            src,
-                            dst,
-                        });
-                    }
-                    _ => {
-                        let dst = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give anything to an immediate opcode");
-                        };
-
-                        let src = if let Some(Ok(token)) = self.lexer.next() {
-                            if let TokenKind::Register(register) = token.token_kind {
-                                register
-                            } else {
-                                panic!("you didn't give a second register to an immediate opcode");
-                            }
-                        } else {
-                            panic!("you didn't give a second anything to an immediate opcode");
-                        };
-
-                        self.lexer.next();
-                        return Ok(Code::Instruction { opcode, src, dst });
-                    }
-                },
-                TokenKind::Block => {}
-                other => {
-                    panic!(
-                        "expected an opcode or a block declaration, found {:?} instead",
-                        other
-                    )
-                }
-            },
+                };
+            }
             None => {
-                panic!("code parenthesis wasn't closed!")
+                return Err(miette::miette!(
+                    "expected block or opcode, found EOF instead"
+                ));
             }
         }
 
-        // We have consumed a '(' followed by a 'block'. We are in a block.
-
-        let label = self.lexer.next().unwrap()?;
-        let label = if let TokenKind::Label(label) = label.token_kind {
-            label
-        } else {
-            panic!(
-                "expected block to begin with label, but began with {:?}",
-                label
-            )
+        // If we've falled through to here, it means that we have consumed a LeftParen followed by
+        // a Block. We are in a block, so first parse the label, and then parse conde until we
+        // encounter a terminating RightParen.
+        let label = match self.lexer.next() {
+            Some(token) => {
+                let token = token?;
+                match token.token_kind {
+                    TokenKind::Label(label) => label,
+                    other => {
+                        return Err(miette::miette!(
+                            labels = vec![LabeledSpan::underline(token.source_span)],
+                            "expected label, found {other} instead",
+                        )
+                        .with_source_code(self.source.to_string()));
+                    }
+                }
+            }
+            None => {
+                return Err(miette::miette!("expected label, found EOF instead"));
+            }
         };
 
         let mut contents = Vec::new();
-
         loop {
             match self.lexer.peek() {
                 Some(token) => {
-                    if token.as_ref().unwrap().token_kind == TokenKind::RightParen {
+                    // HACK: Same as in `parse`.
+                    let token = match token {
+                        Ok(token) => token,
+                        Err(_) => &self.lexer.next().unwrap()?,
+                    };
+
+                    if token.token_kind == TokenKind::RightParen {
+                        // Remember to consume the RightParen, since here we've only `peek`ed
+                        // at it!
                         self.lexer.next();
                         break;
                     } else {
@@ -261,7 +389,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 None => {
-                    panic!("block was not closed with parenthesis")
+                    return Err(miette::miette!(
+                        labels = vec![LabeledSpan::at(
+                            opening_parenthesis.source_span,
+                            "unpaired opening parenthesis"
+                        )],
+                        "expected right parenthesis, found EOF instead",
+                    )
+                    .with_source_code(self.source.to_string()));
                 }
             }
         }
@@ -271,16 +406,20 @@ impl<'a> Parser<'a> {
 
     pub fn parse_immediate(&mut self) -> Result<Immediate<'a>> {
         match self.lexer.next() {
-            Some(token) => match token?.token_kind {
-                TokenKind::Label(label) => Ok(Immediate::Label(label)),
-                TokenKind::Number(n) => Ok(Immediate::Number(n)),
-                other => {
-                    panic!("expected immediate, found {:?}", other)
+            Some(token) => {
+                let token = token?;
+
+                match token.token_kind {
+                    TokenKind::Label(label) => Ok(Immediate::Label(label)),
+                    TokenKind::Number(n) => Ok(Immediate::Number(n)),
+                    other => Err(miette::miette!(
+                        labels = vec![LabeledSpan::underline(token.source_span)],
+                        "expected immediate, found {other} instead",
+                    )
+                    .with_source_code(self.source.to_string())),
                 }
-            },
-            None => {
-                panic!("expected immediate, but lexer was empty")
             }
+            None => Err(miette::miette!("expected immediate, found EOF instead")),
         }
     }
 }
