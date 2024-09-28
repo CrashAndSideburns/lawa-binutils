@@ -1,0 +1,17 @@
+[package]
+name = "pali"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "An assembler for the ilo ISA."
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4.5.17", features = ["derive"] }
+miette = { version = "7.2.0", features = ["fancy"] }
+strum = { version = "0.26.3", features = ["derive"] }
+unicode-ident = "1.0.13"
+
+[lints.clippy]
+upper_case_acronyms = "allow"
