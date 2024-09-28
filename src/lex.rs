@@ -8,7 +8,7 @@ use std::string::ToString;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EnumString)]
 #[strum(ascii_case_insensitive)]
-#[repr(usize)]
+#[repr(u16)]
 pub enum Opcode {
     ADD = 0b000000,
     SUB = 0b000001,
@@ -56,7 +56,7 @@ impl Opcode {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EnumString)]
 #[strum(ascii_case_insensitive)]
-#[repr(usize)]
+#[repr(u16)]
 pub enum Register {
     R0 = 0b00000,
     R1 = 0b00001,
@@ -94,7 +94,7 @@ pub enum Register {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, EnumString)]
 #[strum(ascii_case_insensitive)]
-#[repr(usize)]
+#[repr(u16)]
 pub enum ControlStatusRegister {
     IM0 = 0b00000,
     IM1 = 0b00001,

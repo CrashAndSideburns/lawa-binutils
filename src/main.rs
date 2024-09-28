@@ -1,5 +1,6 @@
 mod lex;
 mod parse;
+mod poki;
 
 use clap::Parser;
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -20,7 +21,7 @@ fn main() -> Result<()> {
     let source_path = args.source_path;
     let output_path = args
         .output_path
-        .unwrap_or_else(|| source_path.with_extension("obj"));
+        .unwrap_or_else(|| source_path.with_extension("poki"));
 
     let source = read_to_string(&source_path)
         .into_diagnostic()
@@ -29,8 +30,9 @@ fn main() -> Result<()> {
     let parser = parse::Parser::new(&source);
 
     let program = parser.parse()?;
+    let poki = poki::Poki::from_program(program)?.to_bytes();
 
-    write(&output_path, format!("{:?}", program))
+    write(&output_path, poki)
         .into_diagnostic()
         .wrap_err_with(|| format!("unable to write output to {}", output_path.display()))
 }

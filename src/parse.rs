@@ -421,8 +421,8 @@ impl<'a> Parser<'a> {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Program<'a> {
-    exports: Vec<&'a str>,
-    segments: [Vec<Code<'a>>; 8],
+    pub exports: Vec<&'a str>,
+    pub segments: [Vec<Code<'a>>; 8],
 }
 
 impl<'a> Program<'a> {
@@ -435,7 +435,7 @@ impl<'a> Program<'a> {
             segment_offset: u16,
             partial_symbol_table: &mut HashMap<String, (u16, u16)>,
             ctx: String,
-        ) -> Result<u16> {
+        ) -> Result<()> {
             let mut segment_offset = segment_offset;
             for n in code {
                 match n {
@@ -451,7 +451,7 @@ impl<'a> Program<'a> {
                         {
                             panic!("duplicate definition of label {label}")
                         }
-                        segment_offset = symbol_table_helper(
+                        symbol_table_helper(
                             contents,
                             segment_index,
                             segment_offset,
@@ -459,19 +459,11 @@ impl<'a> Program<'a> {
                             absolute_symbol,
                         )?;
                     }
-                    Code::String(s) => {
-                        segment_offset += u16::try_from(s.len()).unwrap();
-                    }
-                    Code::ImmediateInstruction { .. } => {
-                        segment_offset += 2;
-                    }
-                    _ => {
-                        segment_offset += 1;
-                    }
+                    _ => {}
                 }
+                segment_offset += n.size();
             }
-
-            Ok(segment_offset)
+            Ok(())
         }
 
         let mut symbol_table = HashMap::new();
@@ -519,6 +511,23 @@ pub enum Code<'a> {
     JSH {
         imm: Immediate<'a>,
     },
+}
+
+impl Code<'_> {
+    pub fn size(&self) -> u16 {
+        match self {
+            Code::Block { contents, .. } => contents.iter().map(Self::size).sum(),
+            Code::String(s) => {
+                // FIXME: Either the parser should be proving the guarantee that the string
+                // is at most u16::MAX words long in a UTF-16 representation, or we should
+                // signal an error here. It is probably preferable for the parser to
+                // provide this guarantee.
+                u16::try_from(s.encode_utf16().collect::<Vec<_>>().len()).unwrap()
+            }
+            Code::ImmediateInstruction { .. } => 2,
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
