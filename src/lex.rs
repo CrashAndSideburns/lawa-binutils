@@ -146,11 +146,11 @@ pub struct SegmentPermissions {
     executable: bool,
 }
 
-impl From<SegmentPermissions> for usize {
+impl From<SegmentPermissions> for u16 {
     fn from(segment_permissions: SegmentPermissions) -> Self {
-        (segment_permissions.executable as usize)
-            | ((segment_permissions.writable as usize) << 1)
-            | ((segment_permissions.readable as usize) << 2)
+        (segment_permissions.executable as u16)
+            | ((segment_permissions.writable as u16) << 1)
+            | ((segment_permissions.readable as u16) << 2)
     }
 }
 

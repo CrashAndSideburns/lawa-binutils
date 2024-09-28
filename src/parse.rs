@@ -2,6 +2,7 @@ use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, TokenKind};
 
 use miette::{LabeledSpan, Result};
 
+use std::collections::HashMap;
 use std::iter::Peekable;
 
 #[derive(Debug)]
@@ -153,7 +154,7 @@ impl<'a> Parser<'a> {
                             self.lexer.next();
                             break;
                         } else {
-                            segments[usize::from(permissions)].push(self.parse_code()?);
+                            segments[usize::from(u16::from(permissions))].push(self.parse_code()?);
                         }
                     }
                     None => {
@@ -422,6 +423,70 @@ impl<'a> Parser<'a> {
 pub struct Program<'a> {
     exports: Vec<&'a str>,
     segments: [Vec<Code<'a>>; 8],
+}
+
+impl<'a> Program<'a> {
+    // HACK: This whole method is just absolutely disgusting. It works, but I am very unwilling to
+    // call it done until I put some effort into making it not abhorrent to look at.
+    pub fn symbol_table(&self) -> Result<HashMap<String, (u16, u16)>> {
+        fn symbol_table_helper<'a>(
+            code: &Vec<Code<'a>>,
+            segment_index: u16,
+            segment_offset: u16,
+            partial_symbol_table: &mut HashMap<String, (u16, u16)>,
+            ctx: String,
+        ) -> Result<u16> {
+            let mut segment_offset = segment_offset;
+            for n in code {
+                match n {
+                    Code::Block { label, contents } => {
+                        let absolute_symbol = if ctx.is_empty() {
+                            label.to_string()
+                        } else {
+                            format!("{ctx}.{label}")
+                        };
+                        if partial_symbol_table
+                            .insert(absolute_symbol.clone(), (segment_index, segment_offset))
+                            .is_some()
+                        {
+                            panic!("duplicate definition of label {label}")
+                        }
+                        segment_offset = symbol_table_helper(
+                            contents,
+                            segment_index,
+                            segment_offset,
+                            partial_symbol_table,
+                            absolute_symbol,
+                        )?;
+                    }
+                    Code::String(s) => {
+                        segment_offset += u16::try_from(s.len()).unwrap();
+                    }
+                    Code::ImmediateInstruction { .. } => {
+                        segment_offset += 2;
+                    }
+                    _ => {
+                        segment_offset += 1;
+                    }
+                }
+            }
+
+            Ok(segment_offset)
+        }
+
+        let mut symbol_table = HashMap::new();
+        for i in 0u16..8 {
+            symbol_table_helper(
+                &self.segments[usize::from(i)],
+                i,
+                0,
+                &mut symbol_table,
+                String::new(),
+            )?;
+        }
+
+        Ok(symbol_table)
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
