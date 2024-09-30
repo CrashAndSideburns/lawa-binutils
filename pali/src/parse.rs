@@ -2,7 +2,6 @@ use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, TokenKind};
 
 use miette::{LabeledSpan, Result};
 
-use std::collections::HashMap;
 use std::iter::Peekable;
 
 #[derive(Debug)]
@@ -425,62 +424,6 @@ pub struct Program<'a> {
     pub segments: [Vec<Code<'a>>; 8],
 }
 
-impl<'a> Program<'a> {
-    // HACK: This whole method is just absolutely disgusting. It works, but I am very unwilling to
-    // call it done until I put some effort into making it not abhorrent to look at.
-    pub fn symbol_table(&self) -> Result<HashMap<String, (u16, u16)>> {
-        fn symbol_table_helper<'a>(
-            code: &Vec<Code<'a>>,
-            segment_index: u16,
-            segment_offset: u16,
-            partial_symbol_table: &mut HashMap<String, (u16, u16)>,
-            ctx: String,
-        ) -> Result<()> {
-            let mut segment_offset = segment_offset;
-            for n in code {
-                match n {
-                    Code::Block { label, contents } => {
-                        let absolute_symbol = if ctx.is_empty() {
-                            label.to_string()
-                        } else {
-                            format!("{ctx}.{label}")
-                        };
-                        if partial_symbol_table
-                            .insert(absolute_symbol.clone(), (segment_index, segment_offset))
-                            .is_some()
-                        {
-                            panic!("duplicate definition of label {label}")
-                        }
-                        symbol_table_helper(
-                            contents,
-                            segment_index,
-                            segment_offset,
-                            partial_symbol_table,
-                            absolute_symbol,
-                        )?;
-                    }
-                    _ => {}
-                }
-                segment_offset += n.size();
-            }
-            Ok(())
-        }
-
-        let mut symbol_table = HashMap::new();
-        for i in 0u16..8 {
-            symbol_table_helper(
-                &self.segments[usize::from(i)],
-                i,
-                0,
-                &mut symbol_table,
-                String::new(),
-            )?;
-        }
-
-        Ok(symbol_table)
-    }
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Code<'a> {
     Block {
@@ -516,9 +459,9 @@ pub enum Code<'a> {
 impl Code<'_> {
     pub fn size(&self) -> u16 {
         match self {
-            Code::Block { contents, .. } => contents.iter().map(Self::size).sum(),
+            Code::Block { .. } => 0,
             Code::String(s) => {
-                // FIXME: Either the parser should be proving the guarantee that the string
+                // FIXME: Either the parser should be providing the guarantee that the string
                 // is at most u16::MAX words long in a UTF-16 representation, or we should
                 // signal an error here. It is probably preferable for the parser to
                 // provide this guarantee.

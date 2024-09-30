@@ -4,31 +4,44 @@ use std::io::{self, Read, Write};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Poki<'a> {
-    segments: [Segment<'a>; 8],
-    unresolved_table: Vec<&'a str>,
+    pub segments: [Segment<'a>; 8],
+    pub unresolved_table: Vec<&'a str>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Segment<'a> {
-    contents: Vec<u16>,
-    relocation_table: Vec<RelocationTableEntry>,
-    export_table: Vec<ExportTableEntry<'a>>,
+    pub contents: Vec<u16>,
+    pub relocation_table: Vec<RelocationTableEntry>,
+    pub export_table: Vec<ExportTableEntry<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RelocationTableEntry {
-    offset: u16,
-    segment_index: u16,
-    segment_offset: u16,
+    pub offset: u16,
+    pub segment_index: u16,
+    pub segment_offset: u16,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ExportTableEntry<'a> {
-    label: &'a str,
-    offset: u16,
+    pub label: &'a str,
+    pub offset: u16,
 }
 
 impl Poki<'_> {
+    pub fn new_empty() -> Self {
+        Self {
+            segments: [const {
+                Segment {
+                    contents: Vec::new(),
+                    relocation_table: Vec::new(),
+                    export_table: Vec::new(),
+                }
+            }; 8],
+            unresolved_table: Vec::new(),
+        }
+    }
+
     pub fn serialize(&self, writer: &mut impl Write) -> Result<(), PokiSerializationError> {
         // Write the magic header.
         writer.write_all_words(&"poki".encode_utf16().collect::<Vec<_>>())?;
@@ -44,6 +57,10 @@ impl Poki<'_> {
 
         // Finally, we serialize the table of unresolved symbols.
         for symbol in &self.unresolved_table {
+            let label_size = u16::try_from(symbol.encode_utf16().count()).map_err(|_| {
+                PokiSerializationError::OversizedLabel(symbol.encode_utf16().count())
+            })?;
+            writer.write(&label_size.to_ne_bytes())?;
             writer.write_all_words(&symbol.encode_utf16().collect::<Vec<_>>())?;
         }
 
