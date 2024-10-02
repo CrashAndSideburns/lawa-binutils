@@ -1,7 +1,8 @@
 use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, TokenKind};
 
-use miette::{LabeledSpan, Result};
+use miette::{LabeledSpan, Result, SourceSpan};
 
+use std::fmt;
 use std::iter::Peekable;
 
 #[derive(Debug)]
@@ -59,7 +60,10 @@ impl<'a> Parser<'a> {
                                         match token.token_kind {
                                             TokenKind::RightParen => break,
                                             TokenKind::Label(label) => {
-                                                exports.push(label);
+                                                exports.push(Label {
+                                                    label,
+                                                    source_span: token.source_span,
+                                                });
                                             }
                                             other => {
                                                 return Err(miette::miette!(
@@ -348,7 +352,10 @@ impl<'a> Parser<'a> {
             Some(token) => {
                 let token = token?;
                 match token.token_kind {
-                    TokenKind::Label(label) => label,
+                    TokenKind::Label(label) => Label {
+                        label,
+                        source_span: token.source_span,
+                    },
                     other => {
                         return Err(miette::miette!(
                             labels = vec![LabeledSpan::underline(token.source_span)],
@@ -404,7 +411,10 @@ impl<'a> Parser<'a> {
                 let token = token?;
 
                 match token.token_kind {
-                    TokenKind::Label(label) => Ok(Immediate::Label(label)),
+                    TokenKind::Label(label) => Ok(Immediate::Label(Label {
+                        label,
+                        source_span: token.source_span,
+                    })),
                     TokenKind::Number(n) => Ok(Immediate::Number(n)),
                     other => Err(miette::miette!(
                         labels = vec![LabeledSpan::underline(token.source_span)],
@@ -420,14 +430,14 @@ impl<'a> Parser<'a> {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Program<'a> {
-    pub exports: Vec<&'a str>,
+    pub exports: Vec<Label<'a>>,
     pub segments: [Vec<Code<'a>>; 8],
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Code<'a> {
     Block {
-        label: &'a str,
+        label: Label<'a>,
         contents: Vec<Code<'a>>,
     },
     String(&'a str),
@@ -473,8 +483,23 @@ impl Code<'_> {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Immediate<'a> {
-    Label(&'a str),
+    Label(Label<'a>),
     Number(u16),
+}
+
+// NOTE: Labels are treated a bit differently, since they are the only possible source of errors at
+// the assembly stage. As such, they need to hold on to the SourceSpan from which they are defined
+// so that errors can be appropriately signalled during the assembly stage.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct Label<'a> {
+    pub label: &'a str,
+    pub source_span: SourceSpan,
+}
+
+impl fmt::Display for Label<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }

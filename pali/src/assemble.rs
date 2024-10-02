@@ -1,7 +1,7 @@
 use crate::lex::Opcode;
 use crate::parse::{Code, Immediate, Parser, Program};
 
-use miette::Result;
+use miette::{LabeledSpan, Result, SourceSpan};
 
 use poki::{ExportTableEntry, Poki, RelocationTableEntry};
 
@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Assembler<'a> {
+    source: &'a str,
     program: Program<'a>,
     partial_poki: Poki<'a>,
     segment_index: u16,
@@ -21,6 +22,7 @@ impl<'a> Assembler<'a> {
         let partial_poki = Poki::new_empty();
 
         Ok(Self {
+            source,
             program,
             partial_poki,
             segment_index: 0,
@@ -28,13 +30,35 @@ impl<'a> Assembler<'a> {
         })
     }
 
+    fn symbol_table(&self) -> Result<SymbolTable> {
+        // HACK: This is another hack. We only really need this method because the `symbol_table`
+        // method defined on `Program<'a>` doesn't have access to the source code, and so it can't
+        // attach it itself, so we do that here instead.
+        self.program
+            .symbol_table()
+            .map_err(|e| e.with_source_code(self.source.to_string()))
+    }
+
     pub fn assemble(mut self) -> Result<Poki<'a>> {
+        // At some point I need to run a quick scan to check that I'm not exporting any labels that
+        // I haven't defined.
+        for export in &self.program.exports {
+            if !self.symbol_table()?.contains_key(export.label) {
+                return Err(miette::miette!(
+                    labels = vec![LabeledSpan::underline(export.source_span)],
+                    "label {0} exported, but is not defined",
+                    export.label
+                )
+                .with_source_code(self.source.to_string()));
+            }
+        }
+
         // HACK: This is a total hack. I managed to restructure things in a way that the borrow
         // checker did not appreciate, so I'm just using `clone` as a bandage here until I actually
         // solve the problem.
         for segment in &self.program.segments.clone() {
             for code in segment {
-                self.add_code(&code.clone())?;
+                self.add_code(&code)?;
             }
             self.segment_index += 1;
         }
@@ -49,7 +73,7 @@ impl<'a> Assembler<'a> {
                     self.partial_poki.segments[usize::from(self.segment_index)]
                         .export_table
                         .push(ExportTableEntry {
-                            label,
+                            label: label.label,
                             offset: self.segment_offset,
                         })
                 }
@@ -86,10 +110,11 @@ impl<'a> Assembler<'a> {
                     .push(instruction);
                 let immediate = match imm {
                     Immediate::Label(label) => {
-                        match self.program.symbol_table()?.get(*label) {
+                        match self.symbol_table()?.get(label.label) {
                             Some(SymbolTableEntry {
                                 segment_index,
                                 segment_offset,
+                                ..
                             }) => {
                                 let relocation_table_entry = RelocationTableEntry {
                                     offset: self.segment_offset + 1,
@@ -105,11 +130,11 @@ impl<'a> Assembler<'a> {
                                     .partial_poki
                                     .unresolved_table
                                     .iter()
-                                    .position(|s| s == label)
+                                    .position(|s| s == &label.label)
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label);
+                                        self.partial_poki.unresolved_table.push(label.label);
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };
@@ -148,10 +173,11 @@ impl<'a> Assembler<'a> {
             Code::JSH { imm } => {
                 let immediate = match imm {
                     Immediate::Label(label) => {
-                        match self.program.symbol_table()?.get(*label) {
+                        match self.symbol_table()?.get(label.label) {
                             Some(SymbolTableEntry {
                                 segment_index,
                                 segment_offset,
+                                ..
                             }) => {
                                 let relocation_table_entry = RelocationTableEntry {
                                     offset: self.segment_offset,
@@ -167,11 +193,11 @@ impl<'a> Assembler<'a> {
                                     .partial_poki
                                     .unresolved_table
                                     .iter()
-                                    .position(|s| s == label)
+                                    .position(|s| s == &label.label)
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label);
+                                        self.partial_poki.unresolved_table.push(label.label);
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };
@@ -202,49 +228,52 @@ impl<'a> Assembler<'a> {
 }
 
 impl<'a> Program<'a> {
-    // HACK: This whole method is just absolutely disgusting. It works, but I am very unwilling to
-    // call it done until I put some effort into making it not abhorrent to look at.
     pub fn symbol_table(&self) -> Result<SymbolTable> {
         fn symbol_table_helper<'a>(
-            code: &Vec<Code<'a>>,
+            segment: &Vec<Code<'a>>,
             segment_index: u16,
-            segment_offset: u16,
+            mut segment_offset: u16,
             partial_symbol_table: &mut SymbolTable,
             ctx: String,
         ) -> Result<()> {
-            let mut segment_offset = segment_offset;
-            for n in code {
-                match n {
-                    Code::Block { label, contents } => {
-                        let absolute_symbol = if ctx.is_empty() {
-                            label.to_string()
-                        } else {
-                            format!("{ctx}.{label}")
-                        };
-                        if partial_symbol_table
-                            .insert(
-                                absolute_symbol.clone(),
-                                SymbolTableEntry {
-                                    segment_index,
-                                    segment_offset,
-                                },
-                            )
-                            .is_some()
-                        {
-                            panic!("duplicate definition of label {label}")
-                        }
-                        symbol_table_helper(
-                            contents,
+            for code in segment {
+                if let Code::Block { label, contents } = code {
+                    let absolute_label = if ctx.is_empty() {
+                        label.to_string()
+                    } else {
+                        format!("{ctx}.{label}")
+                    };
+                    if let Some(previous_definition) = partial_symbol_table.insert(
+                        absolute_label.clone(),
+                        SymbolTableEntry {
                             segment_index,
                             segment_offset,
-                            partial_symbol_table,
-                            absolute_symbol,
-                        )?;
+                            source_span: label.source_span,
+                        },
+                    ) {
+                        miette::bail!(
+                            labels = vec![
+                                LabeledSpan::at(
+                                    previous_definition.source_span,
+                                    "label first defined here"
+                                ),
+                                LabeledSpan::at(label.source_span, "and again here")
+                            ],
+                            "label {absolute_label} is defined more than once"
+                        );
                     }
-                    _ => {}
+
+                    symbol_table_helper(
+                        contents,
+                        segment_index,
+                        segment_offset,
+                        partial_symbol_table,
+                        absolute_label,
+                    )?;
                 }
-                segment_offset += n.size();
+                segment_offset += code.size();
             }
+
             Ok(())
         }
 
@@ -269,4 +298,5 @@ type SymbolTable = HashMap<String, SymbolTableEntry>;
 pub struct SymbolTableEntry {
     pub segment_index: u16,
     pub segment_offset: u16,
+    source_span: SourceSpan,
 }
