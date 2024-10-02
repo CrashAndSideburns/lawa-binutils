@@ -43,4 +43,4 @@ which, by default, will write the assembled poki file to fibonacci.poki. if this
 
 ## license
 
-this is free and unencumbered software released into the public domain. see the [UNLICENSE](./UNLICENSE) file or [unlicense.org](https://unlicense.org/) for details
+this is free and unencumbered software released into the public domain. see the [UNLICENSE](../UNLICENSE) file or [unlicense.org](https://unlicense.org/) for details
