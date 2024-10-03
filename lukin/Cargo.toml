@@ -1,0 +1,13 @@
+[package]
+name = "lukin"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "a tool for examining poki files"
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4.5.17", features = ["derive"] }
+miette = { version = "7.2.0", features = ["fancy"] }
+poki = { path = "../poki" }
