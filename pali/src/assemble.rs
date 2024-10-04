@@ -11,7 +11,7 @@ use std::collections::HashMap;
 pub struct Assembler<'a> {
     source: &'a str,
     program: Program<'a>,
-    partial_poki: Poki<'a>,
+    partial_poki: Poki,
     segment_index: u16,
     segment_offset: u16,
 }
@@ -39,7 +39,7 @@ impl<'a> Assembler<'a> {
             .map_err(|e| e.with_source_code(self.source.to_string()))
     }
 
-    pub fn assemble(mut self) -> Result<Poki<'a>> {
+    pub fn assemble(mut self) -> Result<Poki> {
         // At some point I need to run a quick scan to check that I'm not exporting any labels that
         // I haven't defined.
         for export in &self.program.exports {
@@ -73,9 +73,9 @@ impl<'a> Assembler<'a> {
                     self.partial_poki.segments[usize::from(self.segment_index)]
                         .export_table
                         .push(ExportTableEntry {
-                            label: label.label,
+                            label: label.label.to_string(),
                             offset: self.segment_offset,
-                        })
+                        });
                 }
 
                 for code in contents {
@@ -134,7 +134,7 @@ impl<'a> Assembler<'a> {
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label.label);
+                                        self.partial_poki.unresolved_table.push(label.label.to_string());
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };
@@ -197,7 +197,7 @@ impl<'a> Assembler<'a> {
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label.label);
+                                        self.partial_poki.unresolved_table.push(label.label.to_string());
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };

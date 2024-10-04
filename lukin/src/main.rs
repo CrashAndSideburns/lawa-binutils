@@ -15,11 +15,11 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let source = File::open(&args.source_path)
+    let mut source = File::open(&args.source_path)
         .into_diagnostic()
         .wrap_err_with(|| format!("unable to read source from {}", args.source_path.display()))?;
 
-    let poki = Poki::deserialize(&source)
+    let poki = Poki::deserialize(&mut source)
         .into_diagnostic()
         .wrap_err("unable to deserialize provided poki file")?;
 

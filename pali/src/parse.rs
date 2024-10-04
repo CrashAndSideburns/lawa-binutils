@@ -2,6 +2,7 @@ use crate::lex::{ControlStatusRegister, Lexer, Opcode, Register, TokenKind};
 
 use miette::{LabeledSpan, Result, SourceSpan};
 
+use std::cmp;
 use std::fmt;
 use std::iter::Peekable;
 
@@ -469,7 +470,7 @@ pub enum Code<'a> {
 impl Code<'_> {
     pub fn size(&self) -> u16 {
         match self {
-            Code::Block { .. } => 0,
+            Code::Block { contents, .. } => contents.iter().map(Code::size).sum(),
             Code::String(s) => {
                 // FIXME: Either the parser should be providing the guarantee that the string
                 // is at most u16::MAX words long in a UTF-16 representation, or we should
@@ -492,10 +493,16 @@ pub enum Immediate<'a> {
 // NOTE: Labels are treated a bit differently, since they are the only possible source of errors at
 // the assembly stage. As such, they need to hold on to the SourceSpan from which they are defined
 // so that errors can be appropriately signalled during the assembly stage.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, Eq)]
 pub struct Label<'a> {
     pub label: &'a str,
     pub source_span: SourceSpan,
+}
+
+impl cmp::PartialEq for Label<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.label == other.label
+    }
 }
 
 impl fmt::Display for Label<'_> {
