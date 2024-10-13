@@ -1,0 +1,12 @@
+[package]
+name = "sama"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "an emulator for the lawa isa"
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+mlua = { version = "0.9.9", features = ["luajit"] }
+ratatui = "0.28.1"
