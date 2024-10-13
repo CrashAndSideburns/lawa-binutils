@@ -3,7 +3,7 @@ name = "pali"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "An assembler for the ilo ISA."
+description = "an assembler for the lawa isa"
 repository.workspace = true
 license.workspace = true
 

@@ -1,13 +1,13 @@
 # pali
 
-pali is an assembler for the ilo isa, which produces assembled code in the poki relocatable binary format
+pali is an assembler for the lawa isa, which produces assembled code in the poki relocatable binary format
 
 ## installation
 
 the easiest way to install pali is using cargo, the package manager for the rust programming language. if cargo is not installed on your computer, consult [the installation instructions](https://www.rust-lang.org/tools/install). once cargo is installed, the newest version of pali may be installed by simply running
 
 ``` bash
-cargo install --git https://codeberg.org/mra/ilo-binutils --bin pali
+cargo install --git https://codeberg.org/mra/lawa-binutils --bin pali
 ```
 
 ## usage

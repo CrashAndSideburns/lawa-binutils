@@ -120,14 +120,14 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
 
             frame.render_widget(prompt, prompt_area);
         })?;
- 
+
         // FIXME: This is some super janky input handling. I might want to switch to something like
         // `readline` in the future.
         if let event::Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
                 // Exit gracefully on C-c.
                 if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                    return Ok(())
+                    return Ok(());
                 }
 
                 match key.code {

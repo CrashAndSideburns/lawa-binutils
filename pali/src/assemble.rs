@@ -134,7 +134,9 @@ impl<'a> Assembler<'a> {
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label.label.to_string());
+                                        self.partial_poki
+                                            .unresolved_table
+                                            .push(label.label.to_string());
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };
@@ -197,7 +199,9 @@ impl<'a> Assembler<'a> {
                                 {
                                     Some(segment_offset) => segment_offset,
                                     None => {
-                                        self.partial_poki.unresolved_table.push(label.label.to_string());
+                                        self.partial_poki
+                                            .unresolved_table
+                                            .push(label.label.to_string());
                                         self.partial_poki.unresolved_table.len() - 1
                                     }
                                 };

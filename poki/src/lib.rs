@@ -208,7 +208,9 @@ impl Segment {
         while remaining_export_table_size != 0 {
             let label_size = reader.read_word()?;
             if label_size + 2 > remaining_export_table_size {
-                return Err(PokiDeserializationError::StringOverrun(label_size + 1 - remaining_export_table_size));
+                return Err(PokiDeserializationError::StringOverrun(
+                    label_size + 1 - remaining_export_table_size,
+                ));
             }
 
             let mut label = Vec::new();
@@ -219,10 +221,7 @@ impl Segment {
 
             let offset = reader.read_word()?;
 
-            export_table.push(ExportTableEntry {
-                 label,
-                 offset,
-             });
+            export_table.push(ExportTableEntry { label, offset });
 
             remaining_export_table_size -= label_size + 2;
         }

@@ -3,6 +3,6 @@ name = "poki"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "A library for serializing and deserializing the poki relocatable binary format."
+description = "a library for serializing and deserializing the poki relocatable binary format"
 repository.workspace = true
 license.workspace = true

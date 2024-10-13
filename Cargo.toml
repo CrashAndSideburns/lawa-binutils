@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-authors = ["Morgan Arnold <morgan.arnold@proton.me>"]
+authors = ["morgan arnold <morgan.arnold@proton.me>"]
 edition = "2021"
-repository = "https://codeberg.org/mra/ilo-binutils"
+repository = "https://codeberg.org/mra/lawa-binutils"
 license = "Unlicense"
