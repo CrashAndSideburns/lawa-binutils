@@ -1,6 +1,10 @@
 use crate::emulator::Emulator;
 
-use mlua::{FromLua, Lua, MetaMethod, Result, UserData, UserDataFields, UserDataMethods, Value};
+use mlua::{
+    FromLua, Lua, MetaMethod, Result, Table, UserData, UserDataFields, UserDataMethods, Value,
+};
+
+use ratatui::style::{Color, Style};
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -13,6 +17,9 @@ struct LuaControlStatusRegisters(Rc<RefCell<Emulator>>);
 struct LuaInterruptMaskRegisters(Rc<RefCell<Emulator>>);
 struct LuaMemoryProtectionControlRegisters(Rc<RefCell<Emulator>>);
 struct LuaMemoryProtectionAddressRegisters(Rc<RefCell<Emulator>>);
+
+#[derive(Default)]
+pub struct LuaStyle(Style);
 
 impl Default for LuaEmulator {
     fn default() -> Self {
@@ -193,5 +200,48 @@ impl UserData for LuaMemoryProtectionAddressRegisters {
                 Ok(())
             },
         );
+    }
+}
+
+impl Into<Style> for LuaStyle {
+    fn into(self) -> Style {
+        self.0
+    }
+}
+
+impl FromLua<'_> for LuaStyle {
+    fn from_lua(value: Value, _: &Lua) -> Result<Self> {
+        match value {
+            Value::Table(t) => {
+                let mut style = Style::default();
+
+                style.fg = t
+                    .get::<_, Table>("fg")
+                    .and_then(|t| {
+                        Ok(Some(Color::Rgb(
+                            t.get("r").unwrap_or(0xFF),
+                            t.get("g").unwrap_or(0xFF),
+                            t.get("b").unwrap_or(0xFF),
+                        )))
+                    })
+                    .unwrap_or_default();
+
+                style.bg = t
+                    .get::<_, Table>("bg")
+                    .and_then(|t| {
+                        Ok(Some(Color::Rgb(
+                            t.get("r").unwrap_or_default(),
+                            t.get("g").unwrap_or_default(),
+                            t.get("b").unwrap_or_default(),
+                        )))
+                    })
+                    .unwrap_or_default();
+
+                Ok(LuaStyle(style))
+            }
+            _ => {
+                todo!()
+            }
+        }
     }
 }

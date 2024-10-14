@@ -1,26 +1,32 @@
 use crate::emulator::{ControlStatusRegisters, Ram, Registers};
+use crate::lua::LuaStyle;
+
+use mlua::{Function, Table};
 
 use ratatui::{
     prelude::{Buffer, Rect},
-    text::{Line, Text},
+    style::{Color, Style},
+    text::{Line, Span, Text},
     widgets::{Block, BorderType, Padding, Widget},
 };
 
-pub struct RamWidget<'a> {
+pub struct RamWidget<'a, 'lua> {
     ram: &'a Ram,
     view_offset: u16,
+    style_handle: Function<'lua>,
 }
 
-impl<'a> RamWidget<'a> {
-    pub fn new(ram: &'a Ram) -> Self {
+impl<'a, 'lua> RamWidget<'a, 'lua> {
+    pub fn new(ram: &'a Ram, view_offset: u16, style_handle: Function<'lua>) -> Self {
         Self {
             ram,
-            view_offset: 0,
+            view_offset,
+            style_handle,
         }
     }
 }
 
-impl Widget for RamWidget<'_> {
+impl Widget for RamWidget<'_, '_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -34,12 +40,20 @@ impl Widget for RamWidget<'_> {
 
         let mut lines = Vec::new();
         for i in 0..inner_area.height {
-            let mut line = format!("{:#06x}:", self.view_offset + displayable_width * i);
+            let mut line = vec![Span::raw(format!(
+                "{:#06x}:",
+                self.view_offset + displayable_width * i
+            ))];
             for j in 0..displayable_width {
-                line.push_str(&format!(
-                    " {:04x}",
-                    self.ram[self.view_offset + displayable_width * i + j]
-                ));
+                line.push(Span::raw(" "));
+
+                let address = self.view_offset + displayable_width * i + j;
+                let style = self
+                    .style_handle
+                    .call::<_, LuaStyle>(address)
+                    .unwrap_or_default();
+
+                line.push(Span::styled(format!("{:04x}", self.ram[address]), style));
             }
             lines.push(Line::from(line));
         }
@@ -48,19 +62,20 @@ impl Widget for RamWidget<'_> {
     }
 }
 
-pub struct RegistersWidget<'a> {
+pub struct RegistersWidget<'a, 'lua> {
     registers: &'a Registers,
-
     aliases: [Option<String>; 32],
     visibility_bitmask: u32,
+    style_handle: Function<'lua>,
 }
 
-impl<'a> RegistersWidget<'a> {
-    pub fn new(registers: &'a Registers) -> Self {
+impl<'a, 'lua> RegistersWidget<'a, 'lua> {
+    pub fn new(registers: &'a Registers, style_handle: Function<'lua>) -> Self {
         Self {
             registers,
             aliases: [const { None }; 32],
             visibility_bitmask: 0xFFFFFFFF,
+            style_handle,
         }
     }
 
@@ -87,7 +102,7 @@ impl<'a> RegistersWidget<'a> {
     }
 }
 
-impl Widget for RegistersWidget<'_> {
+impl Widget for RegistersWidget<'_, '_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -104,14 +119,21 @@ impl Widget for RegistersWidget<'_> {
         let mut lines = Vec::new();
         for i in 0u16..32 {
             if self.visibility_bitmask & (1 << i) != 0 {
+                let mut line = Vec::new();
+
                 let register_name = match &self.aliases[usize::from(i)] {
                     Some(a) => format!("{}", a),
                     None => format!("r{}", i),
                 };
-                lines.push(Line::from(format!(
-                    "{:register_names_max_length$} {:#06x}",
-                    register_name, self.registers[i]
+                line.push(Span::raw(format!(
+                    "{:register_names_max_length$} ",
+                    register_name
                 )));
+
+                let style = self.style_handle.call::<_, LuaStyle>(i).unwrap_or_default();
+                line.push(Span::styled(format!("{:#06x}", self.registers[i]), style));
+
+                lines.push(Line::from(line));
             }
         }
 
@@ -120,19 +142,20 @@ impl Widget for RegistersWidget<'_> {
     }
 }
 
-pub struct ControlStatusRegistersWidget<'a> {
+pub struct ControlStatusRegistersWidget<'a, 'lua> {
     control_status_registers: &'a ControlStatusRegisters,
-
     aliases: [Option<String>; 32],
     visibility_bitmask: u32,
+    style_handle: Function<'lua>,
 }
 
-impl<'a> ControlStatusRegistersWidget<'a> {
-    pub fn new(control_status_registers: &'a ControlStatusRegisters) -> Self {
+impl<'a, 'lua> ControlStatusRegistersWidget<'a, 'lua> {
+    pub fn new(control_status_registers: &'a ControlStatusRegisters, style_handle: Function<'lua>) -> Self {
         Self {
             control_status_registers,
             aliases: [const { None }; 32],
             visibility_bitmask: 0xFFFFFFFF,
+            style_handle,
         }
     }
 
@@ -171,7 +194,7 @@ impl<'a> ControlStatusRegistersWidget<'a> {
     }
 }
 
-impl Widget for ControlStatusRegistersWidget<'_> {
+impl Widget for ControlStatusRegistersWidget<'_, '_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -187,6 +210,8 @@ impl Widget for ControlStatusRegistersWidget<'_> {
         let mut lines = Vec::new();
         for i in 0u16..32 {
             if self.visibility_bitmask & (1 << i) != 0 {
+                let mut line = Vec::new();
+
                 let register_name = match &self.aliases[usize::from(i)] {
                     Some(a) => format!("{}", a),
                     None => match i {
@@ -200,11 +225,18 @@ impl Widget for ControlStatusRegistersWidget<'_> {
                         _ => unreachable!(),
                     },
                 };
-
-                lines.push(Line::from(format!(
-                    "{:register_names_max_length$} {:#06x}",
-                    register_name, self.control_status_registers[i]
+                line.push(Span::raw(format!(
+                    "{:register_names_max_length$} ",
+                    register_name
                 )));
+
+                let style = self.style_handle.call::<_, LuaStyle>(i).unwrap_or_default();
+                line.push(Span::styled(format!(
+                    "{:#06x}",
+                    self.control_status_registers[i]
+                ), style));
+
+                lines.push(Line::from(line));
             }
         }
 

@@ -18,7 +18,6 @@ use std::io;
 struct App {
     history: Vec<String>,
     history_index: usize,
-
     input_buffer: String,
     output_buffer: String,
 }
@@ -28,7 +27,6 @@ impl App {
         Self {
             history: Vec::new(),
             history_index: 0,
-
             input_buffer: String::new(),
             output_buffer: String::new(),
         }
@@ -58,17 +56,30 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
             let emulator: LuaEmulator = lua.globals().get("emulator").unwrap();
 
             // Create the widget for displaying the RAM.
+            // TODO: Add proper error handling in the case where something goes wrong with
+            // evaluating `widgets.ram.style`. In this case, default styling should be applied.
             let ram = emulator.0.borrow().ram;
-            let ram_widget = RamWidget::new(&ram);
+            let view_offset = lua
+                .load("widgets.ram.view_offset")
+                .eval()
+                .unwrap_or_default();
+            let ram_widget = RamWidget::new(
+                &ram,
+                view_offset,
+                lua.load("widgets.ram.style").eval().unwrap(),
+            );
 
             // Create the widget for displaying the registers.
             let registers = emulator.0.borrow().registers;
-            let registers_widget = RegistersWidget::new(&registers);
+            let registers_widget = RegistersWidget::new(
+                &registers,
+                lua.load("widgets.registers.style").eval().unwrap(),
+            );
 
             // Create the widget for displaying the control/status registers.
             let control_status_registers = emulator.0.borrow().control_status_registers;
             let control_status_registers_widget =
-                ControlStatusRegistersWidget::new(&control_status_registers);
+                ControlStatusRegistersWidget::new(&control_status_registers, lua.load("widgets.control_status_registers.style").eval().unwrap());
 
             // Compute the areas in which the various widgets should be rendered.
             let split = Layout::default()
