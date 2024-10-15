@@ -1,10 +1,11 @@
 use crate::emulator::Emulator;
 
 use mlua::{
-    FromLua, Lua, MetaMethod, Result, Table, UserData, UserDataFields, UserDataMethods, Value,
+    Error::FromLuaConversionError, FromLua, Lua, MetaMethod, Result, Table, UserData,
+    UserDataFields, UserDataMethods, Value,
 };
 
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -258,51 +259,49 @@ impl FromLua<'_> for LuaStyle {
                     })
                     .unwrap_or_default();
 
-                if t.get::<_, Bool>("bold").unwrap_or_default() {
-                    style.add_modifier(Modifiers::BOLD);
+                if t.get::<_, bool>("bold").unwrap_or_default() {
+                    style.add_modifier(Modifier::BOLD);
                 }
 
-                if t.get::<_, Bool>("dim").unwrap_or_default() {
-                    style.add_modifier(Modifiers::DIM);
+                if t.get::<_, bool>("dim").unwrap_or_default() {
+                    style.add_modifier(Modifier::DIM);
                 }
 
-                if t.get::<_, Bool>("italic").unwrap_or_default() {
-                    style.add_modifier(Modifiers::ITALIC);
+                if t.get::<_, bool>("italic").unwrap_or_default() {
+                    style.add_modifier(Modifier::ITALIC);
                 }
 
-                if t.get::<_, Bool>("underlined").unwrap_or_default() {
-                    style.add_modifier(Modifiers::UNDERLINED);
+                if t.get::<_, bool>("underlined").unwrap_or_default() {
+                    style.add_modifier(Modifier::UNDERLINED);
                 }
 
-                if t.get::<_, Bool>("slow_blink").unwrap_or_default() {
-                    style.add_modifier(Modifiers::SLOW_BLINK);
+                if t.get::<_, bool>("slow_blink").unwrap_or_default() {
+                    style.add_modifier(Modifier::SLOW_BLINK);
                 }
 
-                if t.get::<_, Bool>("rapid_blink").unwrap_or_default() {
-                    style.add_modifier(Modifiers::RAPID_BLINK);
+                if t.get::<_, bool>("rapid_blink").unwrap_or_default() {
+                    style.add_modifier(Modifier::RAPID_BLINK);
                 }
 
-                if t.get::<_, Bool>("reversed").unwrap_or_default() {
-                    style.add_modifier(Modifiers::REVERSED);
+                if t.get::<_, bool>("reversed").unwrap_or_default() {
+                    style.add_modifier(Modifier::REVERSED);
                 }
 
-                if t.get::<_, Bool>("hidden").unwrap_or_default() {
-                    style.add_modifier(Modifiers::HIDDEN);
+                if t.get::<_, bool>("hidden").unwrap_or_default() {
+                    style.add_modifier(Modifier::HIDDEN);
                 }
 
-                if t.get::<_, Bool>("crossed_out").unwrap_or_default() {
-                    style.add_modifier(Modifiers::CROSSED_OUT);
+                if t.get::<_, bool>("crossed_out").unwrap_or_default() {
+                    style.add_modifier(Modifier::CROSSED_OUT);
                 }
 
                 Ok(LuaStyle(style))
             }
-            other => {
-                Err(FromLuaConversionError {
-                    from: other.type_name(),
-                    to: "LuaStyle",
-                    message: None,
-                })
-            }
+            other => Err(FromLuaConversionError {
+                from: other.type_name(),
+                to: "LuaStyle",
+                message: None,
+            }),
         }
     }
 }
