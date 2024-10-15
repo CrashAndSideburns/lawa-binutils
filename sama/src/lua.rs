@@ -9,23 +9,31 @@ use ratatui::style::{Color, Style};
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
+/// a wrapper to allow lua interop for emulator::Emulator
+#[derive(Default)]
 pub struct LuaEmulator(pub Rc<RefCell<Emulator>>);
 
+/// a wrapper to allow lua interop for emulator::Ram
 struct LuaRam(Rc<RefCell<Emulator>>);
+
+/// a wrapper to allow lua interop for emulator::Registers
 struct LuaRegisters(Rc<RefCell<Emulator>>);
+
+/// a wrapper to allow lua interop for emulator::ControlStatusRegisters
 struct LuaControlStatusRegisters(Rc<RefCell<Emulator>>);
+
+/// a wrapper to allow lua interop for the interrupt mask control/status registers
 struct LuaInterruptMaskRegisters(Rc<RefCell<Emulator>>);
+
+/// a wrapper to allow lua interop for the memory protection control control/status registers
 struct LuaMemoryProtectionControlRegisters(Rc<RefCell<Emulator>>);
+
+/// a wrapper to allow lua interop for the memory protection address control/status registers
 struct LuaMemoryProtectionAddressRegisters(Rc<RefCell<Emulator>>);
 
+/// a wrapper to allow lua interop for ratatui::style::Style
 #[derive(Default)]
 pub struct LuaStyle(Style);
-
-impl Default for LuaEmulator {
-    fn default() -> Self {
-        Self(Rc::new(RefCell::new(Emulator::default())))
-    }
-}
 
 impl FromLua<'_> for LuaEmulator {
     fn from_lua(value: Value, _: &Lua) -> Result<Self> {
@@ -237,10 +245,63 @@ impl FromLua<'_> for LuaStyle {
                     })
                     .unwrap_or_default();
 
+                // NOTE: i am undecided on whether or not i hate breaking parity with the field
+                // names from ratatui::style::Style more than i hate american english
+                style.underline_color = t
+                    .get::<_, Table>("underline_color")
+                    .and_then(|t| {
+                        Ok(Some(Color::Rgb(
+                            t.get("r").unwrap_or_default(),
+                            t.get("g").unwrap_or_default(),
+                            t.get("b").unwrap_or_default(),
+                        )))
+                    })
+                    .unwrap_or_default();
+
+                if t.get::<_, Bool>("bold").unwrap_or_default() {
+                    style.add_modifier(Modifiers::BOLD);
+                }
+
+                if t.get::<_, Bool>("dim").unwrap_or_default() {
+                    style.add_modifier(Modifiers::DIM);
+                }
+
+                if t.get::<_, Bool>("italic").unwrap_or_default() {
+                    style.add_modifier(Modifiers::ITALIC);
+                }
+
+                if t.get::<_, Bool>("underlined").unwrap_or_default() {
+                    style.add_modifier(Modifiers::UNDERLINED);
+                }
+
+                if t.get::<_, Bool>("slow_blink").unwrap_or_default() {
+                    style.add_modifier(Modifiers::SLOW_BLINK);
+                }
+
+                if t.get::<_, Bool>("rapid_blink").unwrap_or_default() {
+                    style.add_modifier(Modifiers::RAPID_BLINK);
+                }
+
+                if t.get::<_, Bool>("reversed").unwrap_or_default() {
+                    style.add_modifier(Modifiers::REVERSED);
+                }
+
+                if t.get::<_, Bool>("hidden").unwrap_or_default() {
+                    style.add_modifier(Modifiers::HIDDEN);
+                }
+
+                if t.get::<_, Bool>("crossed_out").unwrap_or_default() {
+                    style.add_modifier(Modifiers::CROSSED_OUT);
+                }
+
                 Ok(LuaStyle(style))
             }
-            _ => {
-                todo!()
+            other => {
+                Err(FromLuaConversionError {
+                    from: other.type_name(),
+                    to: "LuaStyle",
+                    message: None,
+                })
             }
         }
     }
