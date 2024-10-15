@@ -260,39 +260,39 @@ impl FromLua<'_> for LuaStyle {
                     .unwrap_or_default();
 
                 if t.get::<_, bool>("bold").unwrap_or_default() {
-                    style.add_modifier(Modifier::BOLD);
+                    style = style.add_modifier(Modifier::BOLD);
                 }
 
                 if t.get::<_, bool>("dim").unwrap_or_default() {
-                    style.add_modifier(Modifier::DIM);
+                    style = style.add_modifier(Modifier::DIM);
                 }
 
                 if t.get::<_, bool>("italic").unwrap_or_default() {
-                    style.add_modifier(Modifier::ITALIC);
+                    style = style.add_modifier(Modifier::ITALIC);
                 }
 
                 if t.get::<_, bool>("underlined").unwrap_or_default() {
-                    style.add_modifier(Modifier::UNDERLINED);
+                    style = style.add_modifier(Modifier::UNDERLINED);
                 }
 
                 if t.get::<_, bool>("slow_blink").unwrap_or_default() {
-                    style.add_modifier(Modifier::SLOW_BLINK);
+                    style = style.add_modifier(Modifier::SLOW_BLINK);
                 }
 
                 if t.get::<_, bool>("rapid_blink").unwrap_or_default() {
-                    style.add_modifier(Modifier::RAPID_BLINK);
+                    style = style.add_modifier(Modifier::RAPID_BLINK);
                 }
 
                 if t.get::<_, bool>("reversed").unwrap_or_default() {
-                    style.add_modifier(Modifier::REVERSED);
+                    style = style.add_modifier(Modifier::REVERSED);
                 }
 
                 if t.get::<_, bool>("hidden").unwrap_or_default() {
-                    style.add_modifier(Modifier::HIDDEN);
+                    style = style.add_modifier(Modifier::HIDDEN);
                 }
 
                 if t.get::<_, bool>("crossed_out").unwrap_or_default() {
-                    style.add_modifier(Modifier::CROSSED_OUT);
+                    style = style.add_modifier(Modifier::CROSSED_OUT);
                 }
 
                 Ok(LuaStyle(style))
