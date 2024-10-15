@@ -5,33 +5,18 @@ mod ui;
 use lua::LuaEmulator;
 use ui::{ControlStatusRegistersWidget, PromptWidget, RamWidget, RegistersWidget};
 
-use mlua::{Lua, MultiValue};
+use directories::ProjectDirs;
+
+use mlua::Lua;
 
 use ratatui::{
     crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers},
-    prelude::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout},
     DefaultTerminal,
 };
 
+use std::fs::read_to_string;
 use std::io;
-
-struct App {
-    history: Vec<String>,
-    history_index: usize,
-    input_buffer: String,
-    output_buffer: String,
-}
-
-impl App {
-    fn new() -> Self {
-        Self {
-            history: Vec::new(),
-            history_index: 0,
-            input_buffer: String::new(),
-            output_buffer: String::new(),
-        }
-    }
-}
 
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
@@ -42,44 +27,68 @@ fn main() -> io::Result<()> {
 }
 
 fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
-    let mut app = App::new();
-
     // Initialize the Lua state by sending the emulator over, as well as running the initialization
     // code.
-    let mut lua = Lua::new();
+    let lua = Lua::new();
     lua.globals().set("emulator", LuaEmulator::default());
     lua.load(include_str!("init.lua")).exec();
 
+    // load and execute user `init.lua' file
+    if let Some(project_dirs) = ProjectDirs::from("", "", "sama") {
+        let init_lua_path = project_dirs.config_dir().join("init.lua");
+        if let Ok(init_lua) = read_to_string(init_lua_path) {
+            lua.load(init_lua).exec();
+        }
+    }
+
+    let mut prompt_widget = PromptWidget::from_lua(lua);
+
     loop {
         terminal.draw(|frame| {
+            // TODO: the error handling in here is a mess right now. a strong gust of wind is
+            // enough to make this panic
+
             // Fetch a (wrapped) handle to the emulator from the globals table.
-            let emulator: LuaEmulator = lua.globals().get("emulator").unwrap();
+            let emulator = prompt_widget
+                .lua
+                .globals()
+                .get::<_, LuaEmulator>("emulator")
+                .unwrap();
 
             // Create the widget for displaying the RAM.
-            // TODO: Add proper error handling in the case where something goes wrong with
-            // evaluating `widgets.ram.style`. In this case, default styling should be applied.
             let ram = emulator.0.borrow().ram;
-            let view_offset = lua
+            let view_offset = prompt_widget
+                .lua
                 .load("widgets.ram.view_offset")
                 .eval()
                 .unwrap_or_default();
             let ram_widget = RamWidget::new(
                 &ram,
                 view_offset,
-                lua.load("widgets.ram.style").eval().unwrap(),
+                prompt_widget.lua.load("widgets.ram.style").eval().unwrap(),
             );
 
             // Create the widget for displaying the registers.
             let registers = emulator.0.borrow().registers;
             let registers_widget = RegistersWidget::new(
                 &registers,
-                lua.load("widgets.registers.style").eval().unwrap(),
+                prompt_widget
+                    .lua
+                    .load("widgets.registers.style")
+                    .eval()
+                    .unwrap(),
             );
 
             // Create the widget for displaying the control/status registers.
             let control_status_registers = emulator.0.borrow().control_status_registers;
-            let control_status_registers_widget =
-                ControlStatusRegistersWidget::new(&control_status_registers, lua.load("widgets.control_status_registers.style").eval().unwrap());
+            let control_status_registers_widget = ControlStatusRegistersWidget::new(
+                &control_status_registers,
+                prompt_widget
+                    .lua
+                    .load("widgets.control_status_registers.style")
+                    .eval()
+                    .unwrap(),
+            );
 
             // Compute the areas in which the various widgets should be rendered.
             let split = Layout::default()
@@ -120,84 +129,18 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
                 control_status_registers_widget,
                 control_status_registers_area,
             );
-
-            // FIXME: The current handling of the prompt is quite hacky.
-            let input = if app.history_index == app.history.len() {
-                &app.input_buffer
-            } else {
-                &app.history[app.history_index]
-            };
-            let prompt = PromptWidget::new(input, &app.output_buffer);
-
-            frame.render_widget(prompt, prompt_area);
+            frame.render_widget(&prompt_widget, prompt_area);
         })?;
 
-        // FIXME: This is some super janky input handling. I might want to switch to something like
-        // `readline` in the future.
         if let event::Event::Key(key) = event::read()? {
+            // Exit gracefully on C-c.
             if key.kind == KeyEventKind::Press {
-                // Exit gracefully on C-c.
                 if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                     return Ok(());
                 }
-
-                match key.code {
-                    KeyCode::Char(c) => {
-                        if app.history_index != app.history.len() {
-                            app.input_buffer = app.history[app.history_index].clone();
-                            app.history_index = app.history.len();
-                        }
-
-                        app.input_buffer.push(c);
-                    }
-                    KeyCode::Backspace => {
-                        if app.history_index != app.history.len() {
-                            app.input_buffer = app.history[app.history_index].clone();
-                            app.history_index = app.history.len();
-                        }
-
-                        app.input_buffer.pop();
-                    }
-                    KeyCode::Enter => {
-                        if app.history_index != app.history.len() {
-                            app.input_buffer = app.history[app.history_index].clone();
-                            app.history_index = app.history.len();
-                        }
-
-                        // FIXME: This needs to be actually looked at. This is just a REPL that I
-                        // copied from an example in the `mlua` repository.
-                        app.output_buffer = match lua.load(&app.input_buffer).eval::<MultiValue>() {
-                            Ok(v) => {
-                                format!(
-                                    "{}",
-                                    v.iter()
-                                        .map(|value| format!("{:#?}", value))
-                                        .collect::<Vec<_>>()
-                                        .join("\t")
-                                )
-                            }
-                            Err(e) => {
-                                format!("{}", e)
-                            }
-                        };
-
-                        app.history.push(app.input_buffer.clone());
-                        app.history_index += 1;
-                        app.input_buffer.clear();
-                    }
-                    KeyCode::Up => {
-                        if app.history_index > 0 {
-                            app.history_index -= 1;
-                        }
-                    }
-                    KeyCode::Down => {
-                        if app.history_index < app.history.len() {
-                            app.history_index += 1;
-                        }
-                    }
-                    _ => {}
-                }
             }
+
+            prompt_widget.process_event(key);
         }
     }
 }

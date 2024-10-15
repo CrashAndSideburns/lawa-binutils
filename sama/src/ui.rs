@@ -1,14 +1,17 @@
 use crate::emulator::{ControlStatusRegisters, Ram, Registers};
 use crate::lua::LuaStyle;
 
-use mlua::{Function, Table};
+use mlua::{Function, Lua, MultiValue};
 
 use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    layout::{Constraint, Direction, Layout},
     prelude::{Buffer, Rect},
-    style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Padding, Widget},
+    widgets::{Block, BorderType, Padding, Widget, WidgetRef},
 };
+
+use tui_textarea::TextArea;
 
 pub struct RamWidget<'a, 'lua> {
     ram: &'a Ram,
@@ -150,7 +153,10 @@ pub struct ControlStatusRegistersWidget<'a, 'lua> {
 }
 
 impl<'a, 'lua> ControlStatusRegistersWidget<'a, 'lua> {
-    pub fn new(control_status_registers: &'a ControlStatusRegisters, style_handle: Function<'lua>) -> Self {
+    pub fn new(
+        control_status_registers: &'a ControlStatusRegisters,
+        style_handle: Function<'lua>,
+    ) -> Self {
         Self {
             control_status_registers,
             aliases: [const { None }; 32],
@@ -231,10 +237,10 @@ impl Widget for ControlStatusRegistersWidget<'_, '_> {
                 )));
 
                 let style = self.style_handle.call::<_, LuaStyle>(i).unwrap_or_default();
-                line.push(Span::styled(format!(
-                    "{:#06x}",
-                    self.control_status_registers[i]
-                ), style));
+                line.push(Span::styled(
+                    format!("{:#06x}", self.control_status_registers[i]),
+                    style,
+                ));
 
                 lines.push(Line::from(line));
             }
@@ -245,34 +251,85 @@ impl Widget for ControlStatusRegistersWidget<'_, '_> {
 }
 
 pub struct PromptWidget<'a> {
-    input_buffer: &'a str,
-    output_buffer: &'a str,
+    text_area: TextArea<'a>,
+    output_buffer: String,
+    pub lua: Lua,
+    // TODO: history
 }
 
-impl<'a> PromptWidget<'a> {
-    pub fn new(input_buffer: &'a str, output_buffer: &'a str) -> Self {
+impl PromptWidget<'_> {
+    pub fn from_lua(lua: Lua) -> Self {
         Self {
-            input_buffer,
-            output_buffer,
+            text_area: TextArea::default(),
+            output_buffer: String::new(),
+            lua,
         }
+    }
+
+    pub fn process_event(&mut self, key_event: KeyEvent) {
+        if key_event.kind == KeyEventKind::Press {
+            match key_event.code {
+                KeyCode::Enter => {
+                    self.evaluate_input_buffer();
+                }
+                KeyCode::Char('m') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.evaluate_input_buffer();
+                }
+                // TODO: add keybinds for navigating history
+                _ => {
+                    self.text_area.input(key_event);
+                }
+            }
+        }
+    }
+
+    fn evaluate_input_buffer(&mut self) {
+        // FIXME: this is just a repl that i copied from an example in the `mlua' repository. it
+        // definitely merits a more careful look
+        self.output_buffer = match self
+            .lua
+            .load(self.text_area.lines()[0].clone())
+            .eval::<MultiValue>()
+        {
+            Ok(v) => {
+                format!(
+                    "{}",
+                    v.iter()
+                        .map(|value| format!("{:#?}", value))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            }
+            Err(e) => {
+                format!("{}", e)
+            }
+        };
+
+        // TODO: add the input buffer to the history
+
+        // NOTE: for some reason, it doesn't seem like there's a `clear' method, or similar, so
+        // a completely new value of `text_area' has to be constructed
+        self.text_area = TextArea::default();
     }
 }
 
-impl Widget for PromptWidget<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+impl WidgetRef for PromptWidget<'_> {
+    fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title("Lua Prompt")
             .padding(Padding::horizontal(1));
 
         let inner_area = block.inner(area);
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(1), Constraint::Length(1)])
+            .split(inner_area);
+        let output_area = split[0];
+        let text_area = split[1];
 
         block.render(area, buf);
-
-        Text::from(vec![
-            Line::from(self.output_buffer),
-            Line::from(format!("> {}█", self.input_buffer)),
-        ])
-        .render(inner_area, buf);
+        Text::from(self.output_buffer.as_str()).render(output_area, buf);
+        self.text_area.render(text_area, buf);
     }
 }
