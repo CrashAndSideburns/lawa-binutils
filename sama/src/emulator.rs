@@ -1,6 +1,8 @@
 use std::default::Default;
 use std::ops::{Index, IndexMut};
 
+// TODO: once an actual spec has been written for lawa, include it in the doc comment here
+/// an emulator for a computer based on the lawa isa
 pub struct Emulator {
     pub program_counter: u16,
     pub privileged: bool,
@@ -25,6 +27,11 @@ impl Default for Emulator {
     }
 }
 
+/// the general-purpose registers contained within a lawa cpu
+///
+/// lawa does not actually have 32 general-purpose registers, as the 0th register is the special
+/// `zero register', to which writes are ignored and from which reads always return zero. similarly
+/// to what is done for devices, we maintain an array of 32 registers to simplify indexing
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Registers(pub [u16; 32]);
 
@@ -46,6 +53,12 @@ impl IndexMut<u16> for Registers {
     }
 }
 
+/// the control/status registers contained within a lawa cpu
+///
+/// lawa formally has 32 control/status registers, but only 29 of them currently have specified
+/// uses, with the remaining 3 reserved for potential future specified uses. it is undefined
+/// behaviour to read from or write to any of the control/status registers which do not currently
+/// have a specified use.
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ControlStatusRegisters {
     pub im: [u16; 16],
@@ -88,11 +101,13 @@ impl IndexMut<u16> for ControlStatusRegisters {
     }
 }
 
-pub trait Device {
-    fn input(&mut self, context: u8) -> u16;
-    fn output(&mut self, context: u8, value: u16);
-}
-
+/// the devices connected to the emulator's peripheral bus
+///
+/// the lawa isa actually supports up to 255 devices on the peripheral bus, but we maintain an
+/// array of 256 devices to simplify indexing (the device index 0 is illegal, as when devices
+/// trigger interrupts, the low byte of the interrupt context is set to the device index of the
+/// triggering device, but software-triggered interrupts set the low byte of the interrupt context
+/// to 0)
 pub struct Devices([Option<Box<dyn Device>>; 256]);
 
 impl Index<u8> for Devices {
@@ -123,6 +138,24 @@ impl Default for Devices {
     }
 }
 
+/// a device which may be connected to an emulator's peripheral bus
+///
+/// # volatility
+///
+/// this interface is currently volatile, and will change in the future. in particular, it does not
+/// provide a means for devices to update their internal state except for when they are polled by
+/// the cpu, nor does it provice a means for devices to trigger hardware interrupts
+pub trait Device {
+    fn input(&mut self, context: u8) -> u16;
+    fn output(&mut self, context: u8, value: u16);
+}
+
+/// the ram used by the emulator
+///
+/// the lawa isa has somewhat unusual ram, in that it has a 16-bit word size, rather than the more
+/// typical 8-bit word size, and has a 16-bit address size (this is less unusual, but it means that
+/// using the standard `usize'-indexed arrays requires a lot of awkward conversions). as such, a
+/// ram type is implemented to encapsulate these details
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Ram(pub [u16; 0x10000]);
 
@@ -147,31 +180,52 @@ impl Default for Ram {
 }
 
 impl Emulator {
+    /// return `true' iff the emulator, in its current state, has read permissions at `address'
     fn readable(&self, index: u16) -> bool {
         // TODO
         true
     }
 
+    /// return `true' iff the emulator, in its current state, has write permissions at `address'
     fn writable(&self, index: u16) -> bool {
         // TODO
         true
     }
 
+    /// return `true' iff the emulator, in its current state, has execute permissions at `address'
     fn executable(&self, index: u16) -> bool {
         // TODO
         true
     }
 
+    /// set up the state of the emulator to reflect a software-triggered interrupt having occurred
+    ///
+    /// when stepping the emulator, an interrupt can be triggered by software in two ways: by the
+    /// emulator, in user mode, attempting to perform some kind of action for which it does not
+    /// have the appropriate permissions; or by the emulator, running in uses mode, requesting an
+    /// interrupt via the `swpr' instruction
+    ///
+    /// this function simply sets the control/status registers, the program counter, and the
+    /// privilege bit to the states caused by the triggering of a software-triggered interrupt, to
+    /// avoid duplicated code inside of the `step' function.
     fn interrupt(&mut self, context: u8, instruction_length: u16) {
         self.control_status_registers.ipc = self.program_counter.wrapping_add(instruction_length);
-        self.control_status_registers.ic = u16::from(context) << 8;
+        self.control_status_registers.ic = u16::from_le_bytes([0x00, context]);
         self.program_counter = self.control_status_registers.iv;
         self.privileged = true;
     }
 
+    /// executes the instruction located at the address currently in the program counter
+    ///
+    /// # panics
+    ///
+    /// calling this function will panic if executing the instruction which the program counter is
+    /// pointing to depends on any behaviour which is not defined by lawa's specification. in the
+    /// future, this will probably change to something more lenient, with this function instead
+    /// returning some kind of error, and marking the emulator as `poisoned'.
     pub fn step(&mut self) {
-        // First, just pull apart the instruction into its parts, and grab all of the values that
-        // will be useful to the various instructions.
+        // first, just pull apart the instruction into its parts, and grab all of the values that
+        // will be useful to the various instructions
         let instr = self.ram[self.program_counter];
         let opc = instr & 0b0000000000111111;
         let src_idx = (instr & 0b1111100000000000) >> 11;
@@ -179,11 +233,11 @@ impl Emulator {
         let dst_idx = (instr & 0b0000011111000000) >> 6;
         let dst = self.registers[dst_idx];
 
-        // Check if the instruction to be executed takes an immediate.
+        // check if the instruction to be executed takes an immediate
         let takes_imm = ((opc & 0b001000) != 0) && (opc != 0b101001);
 
-        // Make sure that the required addresses are executable, and fetch the immediate if
-        // required.
+        // make sure that the required addresses are executable, and fetch the immediate if
+        // required
         if !self.executable(self.program_counter) {
             self.interrupt(0b00000001, if takes_imm { 2 } else { 1 });
             return;
@@ -197,8 +251,8 @@ impl Emulator {
 
             self.ram[self.program_counter.wrapping_add(1)]
         } else {
-            // NOTE: In this case, the instruction doesn't actually take an immediate at all, so
-            // just return a dummy value.
+            // NOTE: in this case, the instruction doesn't actually take an immediate at all, so
+            // just return a dummy value
             0
         };
 
@@ -309,9 +363,9 @@ impl Emulator {
                 let device_index = src.to_be_bytes()[0];
                 let device_context = src.to_be_bytes()[1];
 
-                // NOTE: Attempting to read input from a device index at which there is no device
-                // attached to the device bus is UB. In a practical hardware implementation, this
-                // is likely to simply return garbage.
+                // NOTE: attempting to read input from a device index at which there is no device
+                // attached to the device bus is undefined behaviour. in a hardware implementation,
+                // this is likely to simply return garbage
                 let device = self.devices[device_index].as_mut().expect("attempted to read intput from device at index {device_index}, but no such device exists");
                 self.registers[dst_idx] = device.input(device_context);
             }
@@ -439,14 +493,16 @@ impl Emulator {
                 }
             }
             _ => {
-                // NOTE: In this implementation, undefined opcodes cause a panic. This is UB, so a
-                // compliant implementation could do anything here.
+                // NOTE: in this implementation, attempting to execute an instruction with an
+                // undefined opcode causes a panic. this is undefined behaviour, so a
+                // specification-compliant implementation could do anything here
                 panic!("opcode {opc} is currently undefined, and is reserved for potential future usage")
             }
         }
 
-        // NOTE: Jump and branch instructions return early, so we don't need to worry about this
-        // affecting them.
+        // NOTE: jump and branch instructions return early, as do software-triggered interrupts, so
+        // we don't need to worry about this affecting the particular values to which they set the
+        // program counter
         self.program_counter = self
             .program_counter
             .wrapping_add(if takes_imm { 2 } else { 1 });
