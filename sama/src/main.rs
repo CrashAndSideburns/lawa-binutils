@@ -41,7 +41,7 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
         }
     }
 
-    let mut prompt_widget = PromptWidget::from_lua(lua);
+    let mut prompt_widget = PromptWidget::default();
 
     loop {
         terminal.draw(|frame| {
@@ -49,43 +49,32 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
             // enough to make this panic
 
             // Fetch a (wrapped) handle to the emulator from the globals table.
-            let emulator = prompt_widget
-                .lua
-                .globals()
-                .get::<_, LuaEmulator>("emulator")
-                .unwrap();
+            let emulator = lua.globals().get::<_, LuaEmulator>("emulator").unwrap();
 
             // Create the widget for displaying the RAM.
             let ram = emulator.0.borrow().ram;
-            let view_offset = prompt_widget
-                .lua
+            let view_offset = lua
                 .load("widgets.ram.view_offset")
                 .eval()
                 .unwrap_or_default();
             let ram_widget = RamWidget::new(
                 &ram,
                 view_offset,
-                prompt_widget.lua.load("widgets.ram.style").eval().unwrap(),
+                lua.load("widgets.ram.style").eval().unwrap(),
             );
 
             // Create the widget for displaying the registers.
             let registers = emulator.0.borrow().registers;
             let registers_widget = RegistersWidget::new(
                 &registers,
-                prompt_widget
-                    .lua
-                    .load("widgets.registers.style")
-                    .eval()
-                    .unwrap(),
+                lua.load("widgets.registers.style").eval().unwrap(),
             );
 
             // Create the widget for displaying the control/status registers.
             let control_status_registers = emulator.0.borrow().control_status_registers;
             let control_status_registers_widget = ControlStatusRegistersWidget::new(
                 &control_status_registers,
-                prompt_widget
-                    .lua
-                    .load("widgets.control_status_registers.style")
+                lua.load("widgets.control_status_registers.style")
                     .eval()
                     .unwrap(),
             );
@@ -133,14 +122,22 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
         })?;
 
         if let event::Event::Key(key) = event::read()? {
-            // Exit gracefully on C-c.
             if key.kind == KeyEventKind::Press {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                    return Ok(());
+                match key.code {
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Ok(())
+                    }
+                    KeyCode::Enter => {
+                        prompt_widget.evaluate_input_buffer(&lua);
+                    }
+                    KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        prompt_widget.evaluate_input_buffer(&lua);
+                    }
+                    _ => {
+                        prompt_widget.process_key_event(key);
+                    }
                 }
             }
-
-            prompt_widget.process_event(key);
         }
     }
 }

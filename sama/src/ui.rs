@@ -1,6 +1,8 @@
 use crate::emulator::{ControlStatusRegisters, Ram, Registers};
 use crate::lua::LuaStyle;
 
+use directories::ProjectDirs;
+
 use mlua::{Function, Lua, MultiValue};
 
 use ratatui::{
@@ -13,6 +15,19 @@ use ratatui::{
 
 use tui_textarea::TextArea;
 
+use std::fs::{create_dir_all, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+
+/// a widget for displaying the contents of ram
+///
+/// this widget is responsible for rendering a window into the ram of an emulator. this widget will
+/// generally be the largest in the displayed ui. `view_offset' defines the point at which the view
+/// into ram begins. the displayed addresses of ram begin from `view_offset'. the user will
+/// typically want to set this based on the program counter to follow program execution, but may
+/// occasionally wish to jump to a different point in ram, say to examine the state of some data
+/// structure. styling the widget via a provided lua function is also possible. when displaying the
+/// contents of each address in ram, the `style_handle' function will be called, with the address
+/// provided as an argument
 pub struct RamWidget<'a, 'lua> {
     ram: &'a Ram,
     view_offset: u16,
@@ -31,26 +46,30 @@ impl<'a, 'lua> RamWidget<'a, 'lua> {
 
 impl Widget for RamWidget<'_, '_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // render the surrounding block
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title("RAM")
             .padding(Padding::horizontal(1));
         let inner_area = block.inner(area);
-
         block.render(area, buf);
 
-        let displayable_width = (inner_area.width - 7) / 5;
+        // 7 columns are taken up by the address which begins each line and the colon, and
+        // displaying each value takes 5 columns, 4 for the value and 1 for the space
+        let values_per_row = (inner_area.width - 7) / 5;
 
+        // construct the lines which the widget displays, calling the `style_handle' function for
+        // each address to determine how it should be styled
         let mut lines = Vec::new();
-        for i in 0..inner_area.height {
+        for row_index in 0..inner_area.height {
             let mut line = vec![Span::raw(format!(
                 "{:#06x}:",
-                self.view_offset + displayable_width * i
+                self.view_offset + values_per_row * row_index
             ))];
-            for j in 0..displayable_width {
+            for value_index in 0..values_per_row {
                 line.push(Span::raw(" "));
 
-                let address = self.view_offset + displayable_width * i + j;
+                let address = self.view_offset + values_per_row * row_index + value_index;
                 let style = self
                     .style_handle
                     .call::<_, LuaStyle>(address)
@@ -61,10 +80,20 @@ impl Widget for RamWidget<'_, '_> {
             lines.push(Line::from(line));
         }
 
+        // render the body of the widget
         Text::from(lines).render(inner_area, buf);
     }
 }
 
+// TODO: add lua support for setting aliases and the visibility bitmask. here, that will just mean
+// modifying the `new' function. the actual work on the lua side of things will need to be done
+// when the widget is constructed
+/// a widget for displaying the contents of the general-purpose registers
+///
+/// this widget is reponsible for rendering the contents of the general-purpose registers. the
+/// widget can be styled via a provided lua function. when displaying the contents of a register,
+/// the `style_handle' function will be called, with the index of the register provided as an
+/// argument
 pub struct RegistersWidget<'a, 'lua> {
     registers: &'a Registers,
     aliases: [Option<String>; 32],
@@ -145,6 +174,13 @@ impl Widget for RegistersWidget<'_, '_> {
     }
 }
 
+// TODO: the same changes to lua support need to be made here as for the registers widget
+/// a widget for displaying the contents of the control/status registers
+///
+/// this widget is reponsible for rendering the contents of the control/status registers. the
+/// widget can be styled via a provided lua function. when displaying the contents of a register,
+/// the `style_handle' function will be called, with the index of the register provided as an
+/// argument
 pub struct ControlStatusRegistersWidget<'a, 'lua> {
     control_status_registers: &'a ControlStatusRegisters,
     aliases: [Option<String>; 32],
@@ -251,31 +287,60 @@ impl Widget for ControlStatusRegistersWidget<'_, '_> {
 }
 
 pub struct PromptWidget<'a> {
-    text_area: TextArea<'a>,
+    pub text_area: TextArea<'a>,
     output_buffer: String,
-    pub lua: Lua,
-    // TODO: history
+    history_file: Option<File>,
+    history: Vec<String>,
+    history_index: usize,
 }
 
-impl PromptWidget<'_> {
-    pub fn from_lua(lua: Lua) -> Self {
+impl Default for PromptWidget<'_> {
+    fn default() -> Self {
+        // FIXME: i'm unwrapping here out of laziness. it should be quite hard to accidentally
+        // trigger a crash with this
+        let project_dirs = ProjectDirs::from("", "", "sama").unwrap();
+
+        // make sure that the directory which contains the history exists
+        create_dir_all(project_dirs.data_dir());
+
+        // fetch the existing history
+        let history_file_path = project_dirs.data_dir().join("history");
+        let history_file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .read(true)
+            .open(history_file_path)
+            .ok();
+        let history = history_file
+            .as_ref()
+            .map(|f| {
+                BufReader::new(f)
+                    .lines()
+                    .filter_map(|r| r.map(|s| s.to_string()).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let history_index = history.len();
+
         Self {
             text_area: TextArea::default(),
             output_buffer: String::new(),
-            lua,
+            history_file,
+            history,
+            history_index,
         }
     }
+}
 
-    pub fn process_event(&mut self, key_event: KeyEvent) {
+impl PromptWidget<'_> {
+    pub fn process_key_event(&mut self, key_event: KeyEvent) {
         if key_event.kind == KeyEventKind::Press {
             match key_event.code {
-                KeyCode::Enter => {
-                    self.evaluate_input_buffer();
-                }
-                KeyCode::Char('m') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.evaluate_input_buffer();
-                }
-                // TODO: add keybinds for navigating history
+                // TODO: implement keybinds for navigating history
+                KeyCode::Up => {}
+                KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {}
+                KeyCode::Down => {}
+                KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {}
                 _ => {
                     self.text_area.input(key_event);
                 }
@@ -283,14 +348,12 @@ impl PromptWidget<'_> {
         }
     }
 
-    fn evaluate_input_buffer(&mut self) {
+    pub fn evaluate_input_buffer(&mut self, lua: &Lua) {
+        let input_buffer = self.text_area.lines()[0].clone();
+
         // FIXME: this is just a repl that i copied from an example in the `mlua' repository. it
         // definitely merits a more careful look
-        self.output_buffer = match self
-            .lua
-            .load(self.text_area.lines()[0].clone())
-            .eval::<MultiValue>()
-        {
+        self.output_buffer = match lua.load(&input_buffer).eval::<MultiValue>() {
             Ok(v) => {
                 format!(
                     "{}",
@@ -305,7 +368,14 @@ impl PromptWidget<'_> {
             }
         };
 
-        // TODO: add the input buffer to the history
+        // if we evaluate an empty buffer, don't pollute the history with blank lines
+        if !input_buffer.is_empty() {
+            if let Some(file) = &mut self.history_file {
+                writeln!(file, "{}", &input_buffer);
+            }
+            self.history.push(input_buffer);
+            self.history_index = self.history.len();
+        }
 
         // NOTE: for some reason, it doesn't seem like there's a `clear' method, or similar, so
         // a completely new value of `text_area' has to be constructed
