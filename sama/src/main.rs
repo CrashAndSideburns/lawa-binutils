@@ -7,7 +7,7 @@ use ui::{ControlStatusRegistersWidget, PromptWidget, RamWidget, RegistersWidget}
 
 use directories::ProjectDirs;
 
-use mlua::Lua;
+use mlua::{Lua, Function};
 
 use ratatui::{
     crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers},
@@ -60,14 +60,14 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
             let ram_widget = RamWidget::new(
                 &ram,
                 view_offset,
-                lua.load("widgets.ram.style").eval().unwrap(),
+                lua.load("widgets.ram.style").eval().unwrap_or(lua.load("function(_) end").eval().unwrap()),
             );
 
             // Create the widget for displaying the registers.
             let registers = emulator.0.borrow().registers;
             let registers_widget = RegistersWidget::new(
                 &registers,
-                lua.load("widgets.registers.style").eval().unwrap(),
+                lua.load("widgets.registers.style").eval().unwrap_or(lua.load("function(_) end").eval().unwrap()),
             );
 
             // Create the widget for displaying the control/status registers.
@@ -76,7 +76,7 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
                 &control_status_registers,
                 lua.load("widgets.control_status_registers.style")
                     .eval()
-                    .unwrap(),
+                    .unwrap_or(lua.load("function(_) end").eval().unwrap()),
             );
 
             // Compute the areas in which the various widgets should be rendered.
