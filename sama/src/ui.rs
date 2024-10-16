@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Block, BorderType, Padding, Widget, WidgetRef},
 };
 
-use tui_textarea::TextArea;
+use tui_textarea::{CursorMove, TextArea};
 
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -287,7 +287,9 @@ impl Widget for ControlStatusRegistersWidget<'_, '_> {
 }
 
 pub struct PromptWidget<'a> {
-    pub text_area: TextArea<'a>,
+    text_area: TextArea<'a>,
+    input_buffer: String,
+
     output_buffer: String,
     history_file: Option<File>,
     history: Vec<String>,
@@ -324,6 +326,7 @@ impl Default for PromptWidget<'_> {
 
         Self {
             text_area: TextArea::default(),
+            input_buffer: String::new(),
             output_buffer: String::new(),
             history_file,
             history,
@@ -336,13 +339,73 @@ impl PromptWidget<'_> {
     pub fn process_key_event(&mut self, key_event: KeyEvent) {
         if key_event.kind == KeyEventKind::Press {
             match key_event.code {
-                // TODO: implement keybinds for navigating history
-                KeyCode::Up => {}
-                KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {}
-                KeyCode::Down => {}
-                KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {}
+                // FIXME: this feels horribly hacky, but it works, at least as far as i can tell
+                KeyCode::Up => {
+                    if self.history_index > 0 {
+                        self.history_index -= 1;
+                        self.text_area =
+                            TextArea::new(vec![self.history[self.history_index].clone()]);
+                        self.text_area.move_cursor(CursorMove::End);
+                    }
+                }
+                KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.history_index > 0 {
+                        self.history_index -= 1;
+                        self.text_area =
+                            TextArea::new(vec![self.history[self.history_index].clone()]);
+                        self.text_area.move_cursor(CursorMove::End);
+                    }
+                }
+                KeyCode::Down => {
+                    if self.history_index < self.history.len() {
+                        self.history_index += 1;
+                        self.text_area = if let Some(history) = self.history.get(self.history_index)
+                        {
+                            TextArea::new(vec![history.clone()])
+                        } else {
+                            TextArea::new(vec![self.input_buffer.clone()])
+                        };
+                        self.text_area.move_cursor(CursorMove::End);
+                    }
+                }
+                KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.history_index < self.history.len() {
+                        self.history_index += 1;
+                        self.text_area = if let Some(history) = self.history.get(self.history_index)
+                        {
+                            TextArea::new(vec![history.clone()])
+                        } else {
+                            TextArea::new(vec![self.input_buffer.clone()])
+                        };
+                        self.text_area.move_cursor(CursorMove::End);
+                    }
+                }
                 _ => {
+                    // if we're currently examining history, we need to check whether or not we're
+                    // modifying it, in which case the modified history should become the new input
+                    // state.
+                    if self.history_index != self.history.len() {
+                        let mut new_text_area = self.text_area.clone();
+                        new_text_area.input(key_event);
+
+                        // we need to be a bit careful about checking that we're actually making
+                        // a modification, since otherwise navigaing through history, copy/pasting,
+                        // etc. could cause our current input to be overwritten
+                        if self.text_area.lines()[0] != new_text_area.lines()[0] {
+                            // we're attempting to modify an entry in history. make it the new
+                            // current input
+                            self.input_buffer = new_text_area.lines()[0].clone();
+                            self.text_area = new_text_area;
+                            self.history_index = self.history.len();
+                            return;
+                        }
+                    }
+
                     self.text_area.input(key_event);
+
+                    if self.history_index == self.history.len() {
+                        self.input_buffer = self.text_area.lines()[0].clone();
+                    }
                 }
             }
         }
@@ -376,6 +439,8 @@ impl PromptWidget<'_> {
             self.history.push(input_buffer);
             self.history_index = self.history.len();
         }
+
+        self.input_buffer = String::new();
 
         // NOTE: for some reason, it doesn't seem like there's a `clear' method, or similar, so
         // a completely new value of `text_area' has to be constructed
