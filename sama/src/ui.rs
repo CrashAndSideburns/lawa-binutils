@@ -1,9 +1,9 @@
-use crate::emulator::{ControlStatusRegisters, Ram, Registers};
-use crate::lua::LuaStyle;
+use crate::emulator::{ControlStatusRegisters, Emulator, Ram, Registers};
+use crate::lua::{LuaEmulator, LuaStyle};
 
 use directories::ProjectDirs;
 
-use mlua::{Function, Lua, MultiValue};
+use mlua::{Function, Lua, MultiValue, Table};
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -28,14 +28,26 @@ use std::io::{BufRead, BufReader, Write};
 /// structure. styling the widget via a provided lua function is also possible. when displaying the
 /// contents of each address in ram, the `style_handle' function will be called, with the address
 /// provided as an argument
-pub struct RamWidget<'a, 'lua> {
-    ram: &'a Ram,
+pub struct RamWidget<'lua> {
+    ram: &'lua Ram,
     view_offset: u16,
     style_handle: Function<'lua>,
 }
 
-impl<'a, 'lua> RamWidget<'a, 'lua> {
-    pub fn new(ram: &'a Ram, view_offset: u16, style_handle: Function<'lua>) -> Self {
+impl<'lua> RamWidget<'lua> {
+    pub fn new(emulator: &'lua Emulator, lua: &'lua Lua) -> Self {
+        let ram = &emulator.ram;
+
+        let view_offset = lua
+            .load("widgets.ram.view_offset")
+            .eval()
+            .unwrap_or_default();
+
+        let style_handle = lua
+            .load("widgets.ram.style")
+            .eval()
+            .unwrap_or(lua.load("function(_) end").eval().unwrap());
+
         Self {
             ram,
             view_offset,
@@ -44,7 +56,7 @@ impl<'a, 'lua> RamWidget<'a, 'lua> {
     }
 }
 
-impl Widget for RamWidget<'_, '_> {
+impl Widget for RamWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // render the surrounding block
         let block = Block::bordered()
@@ -94,19 +106,45 @@ impl Widget for RamWidget<'_, '_> {
 /// widget can be styled via a provided lua function. when displaying the contents of a register,
 /// the `style_handle' function will be called, with the index of the register provided as an
 /// argument
-pub struct RegistersWidget<'a, 'lua> {
-    registers: &'a Registers,
+pub struct RegistersWidget<'lua> {
+    registers: &'lua Registers,
     aliases: [Option<String>; 32],
     visibility_bitmask: u32,
     style_handle: Function<'lua>,
 }
 
-impl<'a, 'lua> RegistersWidget<'a, 'lua> {
-    pub fn new(registers: &'a Registers, style_handle: Function<'lua>) -> Self {
+impl<'lua> RegistersWidget<'lua> {
+    pub fn new(emulator: &'lua Emulator, lua: &'lua Lua) -> Self {
+        let registers = &emulator.registers;
+
+        let aliases = match lua.load("widgets.registers.aliases").eval::<Table>() {
+            Ok(table) => {
+                let mut aliases = [const { None }; 32];
+                for register_index in 0..32 {
+                    if let Ok(alias) = table.get(register_index) {
+                        aliases[register_index] = Some(alias);
+                    }
+                }
+
+                aliases
+            }
+            Err(_) => [const { None }; 32],
+        };
+
+        let visibility_bitmask = lua
+            .load("widgets.registers.visibility_bitmask")
+            .eval()
+            .unwrap_or(0xFFFFFFFF);
+
+        let style_handle = lua
+            .load("widgets.registers.style")
+            .eval()
+            .unwrap_or(lua.load("function(_) end").eval().unwrap());
+
         Self {
             registers,
-            aliases: [const { None }; 32],
-            visibility_bitmask: 0xFFFFFFFF,
+            aliases,
+            visibility_bitmask,
             style_handle,
         }
     }
@@ -134,7 +172,7 @@ impl<'a, 'lua> RegistersWidget<'a, 'lua> {
     }
 }
 
-impl Widget for RegistersWidget<'_, '_> {
+impl Widget for RegistersWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -181,22 +219,48 @@ impl Widget for RegistersWidget<'_, '_> {
 /// widget can be styled via a provided lua function. when displaying the contents of a register,
 /// the `style_handle' function will be called, with the index of the register provided as an
 /// argument
-pub struct ControlStatusRegistersWidget<'a, 'lua> {
-    control_status_registers: &'a ControlStatusRegisters,
+pub struct ControlStatusRegistersWidget<'lua> {
+    control_status_registers: &'lua ControlStatusRegisters,
     aliases: [Option<String>; 32],
     visibility_bitmask: u32,
     style_handle: Function<'lua>,
 }
 
-impl<'a, 'lua> ControlStatusRegistersWidget<'a, 'lua> {
-    pub fn new(
-        control_status_registers: &'a ControlStatusRegisters,
-        style_handle: Function<'lua>,
-    ) -> Self {
+impl<'lua> ControlStatusRegistersWidget<'lua> {
+    pub fn new(emulator: &'lua Emulator, lua: &'lua Lua) -> Self {
+        let control_status_registers = &emulator.control_status_registers;
+
+        let aliases = match lua
+            .load("widgets.control_status_registers.aliases")
+            .eval::<Table>()
+        {
+            Ok(table) => {
+                let mut aliases = [const { None }; 32];
+                for register_index in 0..32 {
+                    if let Ok(alias) = table.get(register_index) {
+                        aliases[register_index] = Some(alias);
+                    }
+                }
+
+                aliases
+            }
+            Err(_) => [const { None }; 32],
+        };
+
+        let visibility_bitmask = lua
+            .load("widgets.control_status_registers.visibility_bitmask")
+            .eval()
+            .unwrap_or(0xFFFFFFFF);
+
+        let style_handle = lua
+            .load("widgets.control_status_registers.style")
+            .eval()
+            .unwrap_or(lua.load("function(_) end").eval().unwrap());
+
         Self {
             control_status_registers,
-            aliases: [const { None }; 32],
-            visibility_bitmask: 0xFFFFFFFF,
+            aliases,
+            visibility_bitmask,
             style_handle,
         }
     }
@@ -236,7 +300,7 @@ impl<'a, 'lua> ControlStatusRegistersWidget<'a, 'lua> {
     }
 }
 
-impl Widget for ControlStatusRegistersWidget<'_, '_> {
+impl Widget for ControlStatusRegistersWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -423,7 +487,7 @@ impl PromptWidget<'_> {
                     v.iter()
                         .map(|value| format!("{:#?}", value))
                         .collect::<Vec<_>>()
-                        .join(" ")
+                        .join("\t")
                 )
             }
             Err(e) => {

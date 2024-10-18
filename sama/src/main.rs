@@ -7,7 +7,7 @@ use ui::{ControlStatusRegistersWidget, PromptWidget, RamWidget, RegistersWidget}
 
 use directories::ProjectDirs;
 
-use mlua::{Lua, Function};
+use mlua::{Function, Lua, MultiValue};
 
 use ratatui::{
     crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers},
@@ -31,13 +31,33 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
     // code.
     let lua = Lua::new();
     lua.globals().set("emulator", LuaEmulator::default());
+
+    // attach a callback function to allow reloading configuration dynamically
+    lua.globals().set(
+        "reload_configuration",
+        lua.create_function(|lua, _: MultiValue| {
+            lua.load(include_str!("init.lua")).exec();
+
+            // load and execute user `init.lua' file
+            if let Some(project_dirs) = ProjectDirs::from("", "", "sama") {
+                let init_lua_path = project_dirs.config_dir().join("init.lua");
+                if let Ok(init_lua) = read_to_string(init_lua_path) {
+                    lua.load(init_lua).exec();
+                }
+            }
+
+            Ok(())
+        })
+        .unwrap(),
+    );
+
     lua.load(include_str!("init.lua")).exec();
 
     // load and execute user `init.lua' file
     if let Some(project_dirs) = ProjectDirs::from("", "", "sama") {
         let init_lua_path = project_dirs.config_dir().join("init.lua");
         if let Ok(init_lua) = read_to_string(init_lua_path) {
-            lua.load(init_lua).exec();
+            lua.load(init_lua).exec().unwrap();
         }
     }
 
@@ -45,39 +65,28 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
 
     loop {
         terminal.draw(|frame| {
-            // TODO: the error handling in here is a mess right now. a strong gust of wind is
-            // enough to make this panic
+            let globals = lua.globals();
 
-            // Fetch a (wrapped) handle to the emulator from the globals table.
-            let emulator = lua.globals().get::<_, LuaEmulator>("emulator").unwrap();
+            // fetch a handle to the emulator from the globals table. if, for some reason, we can't
+            // fetch the emulator, something has gone wrong, so construct a new emulator and place
+            // it in the globals table instead of crashing.
+            let emulator = match globals.get::<_, LuaEmulator>("emulator") {
+                Ok(emulator) => emulator,
+                Err(_) => {
+                    // something happened to the emulator! we need to replace it with a new one.
+                    let emulator = LuaEmulator::default();
+                    let emulator_handle = LuaEmulator(emulator.0.clone());
+                    lua.globals().set("emulator", emulator);
+                    emulator_handle
+                }
+            };
+            let emulator = emulator.0.borrow();
 
-            // Create the widget for displaying the RAM.
-            let ram = emulator.0.borrow().ram;
-            let view_offset = lua
-                .load("widgets.ram.view_offset")
-                .eval()
-                .unwrap_or_default();
-            let ram_widget = RamWidget::new(
-                &ram,
-                view_offset,
-                lua.load("widgets.ram.style").eval().unwrap_or(lua.load("function(_) end").eval().unwrap()),
-            );
-
-            // Create the widget for displaying the registers.
-            let registers = emulator.0.borrow().registers;
-            let registers_widget = RegistersWidget::new(
-                &registers,
-                lua.load("widgets.registers.style").eval().unwrap_or(lua.load("function(_) end").eval().unwrap()),
-            );
-
-            // Create the widget for displaying the control/status registers.
-            let control_status_registers = emulator.0.borrow().control_status_registers;
-            let control_status_registers_widget = ControlStatusRegistersWidget::new(
-                &control_status_registers,
-                lua.load("widgets.control_status_registers.style")
-                    .eval()
-                    .unwrap_or(lua.load("function(_) end").eval().unwrap()),
-            );
+            // create all of the widgets
+            let ram_widget = RamWidget::new(&emulator, &lua);
+            let registers_widget = RegistersWidget::new(&emulator, &lua);
+            let control_status_registers_widget =
+                ControlStatusRegistersWidget::new(&emulator, &lua);
 
             // Compute the areas in which the various widgets should be rendered.
             let split = Layout::default()
