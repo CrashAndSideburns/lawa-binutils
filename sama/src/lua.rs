@@ -40,7 +40,11 @@ impl FromLua<'_> for LuaEmulator {
     fn from_lua(value: Value, _: &Lua) -> Result<Self> {
         match value {
             Value::UserData(ud) => Ok(LuaEmulator(ud.borrow::<Self>()?.0.clone())),
-            _ => unreachable!(),
+            other => Err(FromLuaConversionError {
+                from: other.type_name(),
+                to: "LuaEmulator",
+                message: None,
+            }),
         }
     }
 }
