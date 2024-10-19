@@ -97,9 +97,6 @@ impl Widget for RamWidget<'_> {
     }
 }
 
-// TODO: add lua support for setting aliases and the visibility bitmask. here, that will just mean
-// modifying the `new' function. the actual work on the lua side of things will need to be done
-// when the widget is constructed
 /// a widget for displaying the contents of the general-purpose registers
 ///
 /// this widget is reponsible for rendering the contents of the general-purpose registers. the
@@ -212,7 +209,6 @@ impl Widget for RegistersWidget<'_> {
     }
 }
 
-// TODO: the same changes to lua support need to be made here as for the registers widget
 /// a widget for displaying the contents of the control/status registers
 ///
 /// this widget is reponsible for rendering the contents of the control/status registers. the
