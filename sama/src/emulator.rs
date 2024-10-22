@@ -435,60 +435,54 @@ impl Emulator {
             0b101000 => {
                 // jal
                 self.registers[dst_idx] = self.program_counter.wrapping_add(2);
-                self.program_counter = self.program_counter.wrapping_add(src).wrapping_add(imm);
+                self.program_counter = src.wrapping_add(imm);
                 return;
             }
             0b101001 => {
                 // jlo
-                let imm = (instr & 0b1111111111000000) >> 6;
-                self.program_counter =
-                    self.program_counter
-                        .wrapping_add(if (imm & 0b1000000000) == 0 {
-                            imm
-                        } else {
-                            imm.wrapping_neg()
-                        });
+                let imm = (((instr & 0b1111111111000000) as i16) >> 6) as u16;
+                self.program_counter = self.program_counter.wrapping_add(imm);
                 return;
             }
             0b101010 => {
                 // beq
                 if dst == src {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
             0b101011 => {
                 // bne
                 if dst != src {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
             0b101100 => {
                 // blt
                 if (dst as i16) < (src as i16) {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
             0b101101 => {
                 // bge
                 if (dst as i16) >= (src as i16) {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
             0b101110 => {
                 // bltu
                 if dst < src {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
             0b101111 => {
                 // bgeu
                 if dst >= src {
-                    self.program_counter = self.program_counter.wrapping_add(imm);
+                    self.program_counter = imm;
                     return;
                 }
             }
