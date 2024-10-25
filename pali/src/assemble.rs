@@ -225,7 +225,14 @@ impl<'a> Assembler<'a> {
                     .push(instruction);
             }
         }
-        self.segment_offset += code.size();
+
+        // this is a bit weird-looking, but we should only be updating the segment offset at the
+        // leaves of the ast, or we end up adding offsets twice and throwing off the resultant
+        // relocation table
+        if let Code::Block { .. } = code {
+        } else {
+            self.segment_offset += code.size();
+        }
 
         Ok(())
     }
