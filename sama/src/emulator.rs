@@ -1,6 +1,10 @@
 use std::default::Default;
 use std::ops::{Index, IndexMut};
 
+use crossbeam::channel::{self, Receiver, Sender};
+
+use crate::devices::Devices;
+
 // TODO: once an actual spec has been written for lawa, include it in the doc comment here
 /// an emulator for a computer based on the lawa isa
 pub struct Emulator {
@@ -11,10 +15,21 @@ pub struct Emulator {
     pub control_status_registers: ControlStatusRegisters,
     pub devices: Devices,
     pub ram: Ram,
+
+    interrupt_receiver: Receiver<u16>,
+
+    // we need a copy of the sender for the interrupts channel on hand so that when a new device is
+    // attached we can construct an interrupt handle to send to send to it
+    interrupt_sender: Sender<u16>,
 }
 
 impl Default for Emulator {
     fn default() -> Self {
+        // interrupts aren't buffered, so the channel should only have a capacity of 1. in other
+        // words, if the cpu receives an interrupt, no other device should be able to send one
+        // until the cpu goes through a clock cycle and acknowledges the existing interrupt request
+        let (interrupt_sender, interrupt_receiver) = channel::bounded(1);
+
         Self {
             program_counter: 0,
             privileged: true,
@@ -23,6 +38,9 @@ impl Default for Emulator {
             control_status_registers: ControlStatusRegisters::default(),
             devices: Devices::default(),
             ram: Ram::default(),
+
+            interrupt_receiver,
+            interrupt_sender,
         }
     }
 }
@@ -101,55 +119,6 @@ impl IndexMut<u16> for ControlStatusRegisters {
     }
 }
 
-/// the devices connected to the emulator's peripheral bus
-///
-/// the lawa isa actually supports up to 255 devices on the peripheral bus, but we maintain an
-/// array of 256 devices to simplify indexing (the device index 0 is illegal, as when devices
-/// trigger interrupts, the low byte of the interrupt context is set to the device index of the
-/// triggering device, but software-triggered interrupts set the low byte of the interrupt context
-/// to 0)
-pub struct Devices([Option<Box<dyn Device>>; 256]);
-
-impl Index<u8> for Devices {
-    type Output = Option<Box<dyn Device>>;
-
-    fn index(&self, index: u8) -> &Self::Output {
-        if index == 0 {
-            panic!("device index 0 is reserved, and reading input from it or writing output to it is not allowed")
-        } else {
-            &self.0[usize::from(index)]
-        }
-    }
-}
-
-impl IndexMut<u8> for Devices {
-    fn index_mut(&mut self, index: u8) -> &mut Self::Output {
-        if index == 0 {
-            panic!("device index 0 is reserved, and reading input from it or writing output to it is not allowed")
-        } else {
-            &mut self.0[usize::from(index)]
-        }
-    }
-}
-
-impl Default for Devices {
-    fn default() -> Self {
-        Self([const { None }; 256])
-    }
-}
-
-/// a device which may be connected to an emulator's peripheral bus
-///
-/// # volatility
-///
-/// this interface is currently volatile, and will change in the future. in particular, it does not
-/// provide a means for devices to update their internal state except for when they are polled by
-/// the cpu, nor does it provice a means for devices to trigger hardware interrupts
-pub trait Device {
-    fn input(&mut self, context: u8) -> u16;
-    fn output(&mut self, context: u8, value: u16);
-}
-
 /// the ram used by the emulator
 ///
 /// the lawa isa has somewhat unusual ram, in that it has a 16-bit word size, rather than the more
@@ -198,7 +167,7 @@ impl Emulator {
         true
     }
 
-    /// set up the state of the emulator to reflect a software-triggered interrupt having occurred
+    /// set up the state of the emulator to reflect a software interrupt having occurred
     ///
     /// when stepping the emulator, an interrupt can be triggered by software in two ways: by the
     /// emulator, in user mode, attempting to perform some kind of action for which it does not
@@ -208,10 +177,24 @@ impl Emulator {
     /// this function simply sets the control/status registers, the program counter, and the
     /// privilege bit to the states caused by the triggering of a software-triggered interrupt, to
     /// avoid duplicated code inside of the `step' function.
-    fn interrupt(&mut self, context: u8, instruction_length: u16) {
+    fn software_interrupt(&mut self, context: u8, instruction_length: u16) {
+        // set the global interrupt mask bit
+        self.control_status_registers.im[0] |= 0x01;
+
+        // set the interrupted program counter. because this function is called before the program
+        // counter is updated, we need to be passed the length of the instruction currently being
+        // executed to set the interrupted program counter to the address of the next instruction
+        // to be executed
         self.control_status_registers.ipc = self.program_counter.wrapping_add(instruction_length);
+
+        // set the interrupt context. note that because this is a software interrupt, the low byte
+        // of the interrupt context is 0
         self.control_status_registers.ic = u16::from_le_bytes([0x00, context]);
+        
+        // set the program counter to the interrupt vector
         self.program_counter = self.control_status_registers.iv;
+
+        // set the privilege bit
         self.privileged = true;
     }
 
@@ -224,6 +207,25 @@ impl Emulator {
     /// future, this will probably change to something more lenient, with this function instead
     /// returning some kind of error, and marking the emulator as `poisoned'.
     pub fn step(&mut self) {
+        // check if any attached devices have triggered interrupts that we need to handle
+        if self.interrupt_receiver.is_full() {
+            // when an interrupt is triggered, we need to set the global interrupt mask *before* we
+            // actually remove the interrupt from the receiver, so that a device can't successfully
+            // send another interrupt in the time between the receiver being cleared and the global
+            // interrupt mask being set
+            self.control_status_registers.im[0] |= 0x01;
+
+            // we can unwrap safely here, since we have already checked that the receiver is full
+            let interrupt_context = self.interrupt_receiver.recv().unwrap();
+
+            self.control_status_registers.ipc = self.program_counter;
+            self.control_status_registers.ic = interrupt_context;
+            self.program_counter = self.control_status_registers.iv;
+            self.privileged = true;
+
+            return;
+        }
+
         // first, just pull apart the instruction into its parts, and grab all of the values that
         // will be useful to the various instructions
         let instr = self.ram[self.program_counter];
@@ -239,13 +241,13 @@ impl Emulator {
         // make sure that the required addresses are executable, and fetch the immediate if
         // required
         if !self.executable(self.program_counter) {
-            self.interrupt(0b00000001, if takes_imm { 2 } else { 1 });
+            self.software_interrupt(0b00000001, if takes_imm { 2 } else { 1 });
             return;
         }
 
         let imm = if takes_imm {
             if !self.executable(self.program_counter.wrapping_add(1)) {
-                self.interrupt(0b00000001, 2);
+                self.software_interrupt(0b00000001, 2);
                 return;
             }
 
@@ -338,7 +340,7 @@ impl Emulator {
             0b010000 => {
                 // ld
                 if !self.readable(src) {
-                    self.interrupt(0b00000100, 1);
+                    self.software_interrupt(0b00000100, 1);
                     return;
                 }
 
@@ -347,7 +349,7 @@ impl Emulator {
             0b010001 => {
                 // st
                 if !self.writable(src) {
-                    self.interrupt(0b00000010, 1);
+                    self.software_interrupt(0b00000010, 1);
                     return;
                 }
 
@@ -356,7 +358,7 @@ impl Emulator {
             0b010010 => {
                 // dei
                 if !self.privileged {
-                    self.interrupt(0b00001100, 1);
+                    self.software_interrupt(0b00001100, 1);
                     return;
                 }
 
@@ -366,13 +368,13 @@ impl Emulator {
                 // NOTE: attempting to read input from a device index at which there is no device
                 // attached to the device bus is undefined behaviour. in a hardware implementation,
                 // this is likely to simply return garbage
-                let device = self.devices[device_index].as_mut().expect("attempted to read intput from device at index {device_index}, but no such device exists");
+                let device = self.devices[device_index].as_mut().expect("attempted to read input from device at index {device_index}, but no such device exists");
                 self.registers[dst_idx] = device.input(device_context);
             }
             0b010011 => {
                 // deo
                 if !self.privileged {
-                    self.interrupt(0b00001010, 1);
+                    self.software_interrupt(0b00001010, 1);
                     return;
                 }
 
@@ -386,7 +388,7 @@ impl Emulator {
             0b010100 => {
                 // rcsr
                 if !self.privileged {
-                    self.interrupt(0b00010100, 1);
+                    self.software_interrupt(0b00010100, 1);
                     return;
                 }
 
@@ -395,7 +397,7 @@ impl Emulator {
             0b010101 => {
                 // wcsr
                 if !self.privileged {
-                    self.interrupt(0b00010010, 1);
+                    self.software_interrupt(0b00010010, 1);
                     return;
                 }
 
@@ -408,7 +410,7 @@ impl Emulator {
                     self.privileged = false;
                     return;
                 } else {
-                    self.interrupt(0b00000000, 1);
+                    self.software_interrupt(0b00000000, 1);
                     return;
                 }
             }
@@ -416,7 +418,7 @@ impl Emulator {
             0b011000 => {
                 // ldio
                 if !self.readable(src.wrapping_add(imm)) {
-                    self.interrupt(0b00000100, 2);
+                    self.software_interrupt(0b00000100, 2);
                     return;
                 }
 
@@ -425,7 +427,7 @@ impl Emulator {
             0b011001 => {
                 // stio
                 if !self.writable(src.wrapping_add(imm)) {
-                    self.interrupt(0b00000010, 2);
+                    self.software_interrupt(0b00000010, 2);
                     return;
                 }
 

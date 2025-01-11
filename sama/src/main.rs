@@ -1,3 +1,4 @@
+mod devices;
 mod emulator;
 mod lua;
 mod ui;

@@ -8,6 +8,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+crossbeam = "0.8.4"
 directories = "5.0.1"
 mlua = { version = "0.9.9", features = ["luajit"] }
 ratatui = { version = "0.28.1", features = ["unstable-widget-ref"] }
