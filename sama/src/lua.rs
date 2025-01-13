@@ -7,30 +7,29 @@ use mlua::{
 
 use ratatui::style::{Color, Modifier, Style};
 
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// a wrapper to allow lua interop for emulator::Emulator
 #[derive(Default)]
-pub struct LuaEmulator(pub Rc<RefCell<Emulator>>);
+pub struct LuaEmulator(pub Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for emulator::Ram
-struct LuaRam(Rc<RefCell<Emulator>>);
+struct LuaRam(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for emulator::Registers
-struct LuaRegisters(Rc<RefCell<Emulator>>);
+struct LuaRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for emulator::ControlStatusRegisters
-struct LuaControlStatusRegisters(Rc<RefCell<Emulator>>);
+struct LuaControlStatusRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for the interrupt mask control/status registers
-struct LuaInterruptMaskRegisters(Rc<RefCell<Emulator>>);
+struct LuaInterruptMaskRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for the memory protection control control/status registers
-struct LuaMemoryProtectionControlRegisters(Rc<RefCell<Emulator>>);
+struct LuaMemoryProtectionControlRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for the memory protection address control/status registers
-struct LuaMemoryProtectionAddressRegisters(Rc<RefCell<Emulator>>);
+struct LuaMemoryProtectionAddressRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for ratatui::style::Style
 #[derive(Default)]
@@ -57,17 +56,17 @@ impl UserData for LuaEmulator {
             Ok(LuaControlStatusRegisters(this.0.clone()))
         });
         fields.add_field_method_get("program_counter", |_, this| {
-            Ok(this.0.borrow().program_counter)
+            Ok(this.0.lock().unwrap().program_counter)
         });
         fields.add_field_method_set("program_counter", |_, this, value: u16| {
-            this.0.borrow_mut().program_counter = value;
+            this.0.lock().unwrap().program_counter = value;
             Ok(())
         });
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("step", |_, this, ()| {
-            this.0.borrow_mut().step();
+            this.0.lock().unwrap().step();
             Ok(())
         });
     }
@@ -76,13 +75,13 @@ impl UserData for LuaEmulator {
 impl UserData for LuaRam {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| &e.ram)[index])
+            Ok(this.0.lock().unwrap().ram[index])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| &mut e.ram)[index] = value;
+                this.0.lock().unwrap().ram[index] = value;
                 Ok(())
             },
         );
@@ -92,14 +91,13 @@ impl UserData for LuaRam {
 impl UserData for LuaRegisters {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| &e.registers)[index])
+            Ok(this.0.lock().unwrap().registers[index])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| &mut e.registers)[index] =
-                    value;
+                this.0.lock().unwrap().registers[index] = value;
                 Ok(())
             },
         );
@@ -112,24 +110,24 @@ impl UserData for LuaControlStatusRegisters {
             Ok(LuaInterruptMaskRegisters(this.0.clone()))
         });
         fields.add_field_method_get("iv", |_, this| {
-            Ok(this.0.borrow().control_status_registers.iv)
+            Ok(this.0.lock().unwrap().control_status_registers.iv)
         });
         fields.add_field_method_set("iv", |_, this, value: u16| {
-            this.0.borrow_mut().control_status_registers.iv = value;
+            this.0.lock().unwrap().control_status_registers.iv = value;
             Ok(())
         });
         fields.add_field_method_get("ipc", |_, this| {
-            Ok(this.0.borrow().control_status_registers.ipc)
+            Ok(this.0.lock().unwrap().control_status_registers.ipc)
         });
         fields.add_field_method_set("ipc", |_, this, value: u16| {
-            this.0.borrow_mut().control_status_registers.ipc = value;
+            this.0.lock().unwrap().control_status_registers.ipc = value;
             Ok(())
         });
         fields.add_field_method_get("ic", |_, this| {
-            Ok(this.0.borrow().control_status_registers.ic)
+            Ok(this.0.lock().unwrap().control_status_registers.ic)
         });
         fields.add_field_method_set("ic", |_, this, value: u16| {
-            this.0.borrow_mut().control_status_registers.ic = value;
+            this.0.lock().unwrap().control_status_registers.ic = value;
             Ok(())
         });
         fields.add_field_method_get("mpc", |_, this| {
@@ -141,15 +139,13 @@ impl UserData for LuaControlStatusRegisters {
     }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| &e.control_status_registers)[index])
+            Ok(this.0.lock().unwrap().control_status_registers[index])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| {
-                    &mut e.control_status_registers
-                })[index] = value;
+                this.0.lock().unwrap().control_status_registers[index] = value;
                 Ok(())
             },
         );
@@ -159,17 +155,13 @@ impl UserData for LuaControlStatusRegisters {
 impl UserData for LuaInterruptMaskRegisters {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| {
-                &e.control_status_registers.im
-            })[usize::from(index)])
+            Ok(this.0.lock().unwrap().control_status_registers.im[usize::from(index)])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| {
-                    &mut e.control_status_registers.im
-                })[usize::from(index)] = value;
+                this.0.lock().unwrap().control_status_registers.im[usize::from(index)] = value;
                 Ok(())
             },
         );
@@ -179,17 +171,13 @@ impl UserData for LuaInterruptMaskRegisters {
 impl UserData for LuaMemoryProtectionControlRegisters {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| {
-                &e.control_status_registers.mpc
-            })[usize::from(index)])
+            Ok(this.0.lock().unwrap().control_status_registers.mpc[usize::from(index)])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| {
-                    &mut e.control_status_registers.mpc
-                })[usize::from(index)] = value;
+                this.0.lock().unwrap().control_status_registers.mpc[usize::from(index)] = value;
                 Ok(())
             },
         );
@@ -199,17 +187,13 @@ impl UserData for LuaMemoryProtectionControlRegisters {
 impl UserData for LuaMemoryProtectionAddressRegisters {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |_, this, index: u16| {
-            Ok(Ref::map(this.0.borrow(), |e: &Emulator| {
-                &e.control_status_registers.mpa
-            })[usize::from(index)])
+            Ok(this.0.lock().unwrap().control_status_registers.mpa[usize::from(index)])
         });
 
         methods.add_meta_method_mut(
             MetaMethod::NewIndex,
             |_, this, (index, value): (u16, u16)| {
-                RefMut::map(this.0.borrow_mut(), |e: &mut Emulator| {
-                    &mut e.control_status_registers.mpa
-                })[usize::from(index)] = value;
+                this.0.lock().unwrap().control_status_registers.mpa[usize::from(index)] = value;
                 Ok(())
             },
         );

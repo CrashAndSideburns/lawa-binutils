@@ -47,7 +47,7 @@ impl Default for Devices {
 /// one which may be used to receive input from the device, and one which may be used to send
 /// output to the device. the initialisation function is provided with a handle which the device
 /// may use to attempt to trigger a hardware interrupt
-pub trait Device {
+pub trait Device: Send {
     fn init(&mut self, interrupt_handle: InterruptHandle);
 
     fn input(&mut self, context: u8) -> u16;
