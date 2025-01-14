@@ -190,7 +190,7 @@ impl Emulator {
         // set the interrupt context. note that because this is a software interrupt, the low byte
         // of the interrupt context is 0
         self.control_status_registers.ic = u16::from_le_bytes([0x00, context]);
-        
+
         // set the program counter to the interrupt vector
         self.program_counter = self.control_status_registers.iv;
 

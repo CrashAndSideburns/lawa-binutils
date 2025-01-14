@@ -4,11 +4,16 @@ mod lua;
 mod ui;
 
 use lua::LuaEmulator;
-use ui::{ControlStatusRegistersWidget, PromptWidget, RamWidget, RegistersWidget};
+use ui::{
+    ControlStatusRegistersWidget, ControlStatusRegistersWidgetState, PromptWidget,
+    PromptWidgetState, RamWidget, RamWidgetState, RegistersWidget, RegistersWidgetState,
+};
+
+use crossbeam::channel;
 
 use directories::ProjectDirs;
 
-use mlua::{Function, Lua, MultiValue};
+use mlua::{Lua, MultiValue};
 
 use ratatui::{
     crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers},
@@ -18,6 +23,9 @@ use ratatui::{
 
 use std::fs::read_to_string;
 use std::io;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
@@ -28,30 +36,12 @@ fn main() -> io::Result<()> {
 }
 
 fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
-    // Initialize the Lua state by sending the emulator over, as well as running the initialization
-    // code.
+    // begin by initialising the global lua state
     let lua = Lua::new();
-    lua.globals().set("emulator", LuaEmulator::default());
 
-    // attach a callback function to allow reloading configuration dynamically
-    lua.globals().set(
-        "reload_configuration",
-        lua.create_function(|lua, _: MultiValue| {
-            lua.load(include_str!("init.lua")).exec();
-
-            // load and execute user `init.lua' file
-            if let Some(project_dirs) = ProjectDirs::from("", "", "sama") {
-                let init_lua_path = project_dirs.config_dir().join("init.lua");
-                if let Ok(init_lua) = read_to_string(init_lua_path) {
-                    lua.load(init_lua).exec();
-                }
-            }
-
-            Ok(())
-        })
-        .unwrap(),
-    );
-
+    let emulator = LuaEmulator::default();
+    let emulator_handle = emulator.0.clone();
+    lua.globals().set("emulator", emulator);
     lua.load(include_str!("init.lua")).exec();
 
     // load and execute user `init.lua' file
@@ -62,34 +52,56 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
         }
     }
 
-    let mut prompt_widget = PromptWidget::default();
+    // wrap the global lua state in a mutex so that it can be shared across threads
+    let lua = Arc::new(Mutex::new(lua));
+
+    let (input_sender, input_receiver) = channel::unbounded();
+    let (output_sender, output_receiver) = channel::unbounded();
+
+    let lua_handle = lua.clone();
+    thread::spawn(move || {
+        loop {
+            // wait until we receive some input to evaluate it, then evaluate it
+            if let Ok(input_buffer) = input_receiver.recv() {
+                let output = match lua_handle
+                    .lock()
+                    .unwrap()
+                    .load(&input_buffer)
+                    .eval::<MultiValue>()
+                {
+                    Ok(v) => {
+                        format!(
+                            "{}",
+                            v.iter()
+                                .map(|value| format!("{:#?}", value))
+                                .collect::<Vec<_>>()
+                                .join("\t")
+                        )
+                    }
+                    Err(e) => format!("{}", e),
+                };
+
+                output_sender.send(output);
+            }
+        }
+    });
+
+    let mut prompt_widget = PromptWidget::new(input_sender, output_receiver);
+    let mut prompt_widget_state = PromptWidgetState::default();
+
+    let mut ram_widget_state = RamWidgetState::default();
+    let mut registers_widget_state = RegistersWidgetState::default();
+    let mut control_status_registers_widget_state = ControlStatusRegistersWidgetState::default();
 
     loop {
         terminal.draw(|frame| {
-            let globals = lua.globals();
-
-            // fetch a handle to the emulator from the globals table. if, for some reason, we can't
-            // fetch the emulator, something has gone wrong, so construct a new emulator and place
-            // it in the globals table instead of crashing.
-            let emulator = match globals.get::<_, LuaEmulator>("emulator") {
-                Ok(emulator) => emulator,
-                Err(_) => {
-                    // something happened to the emulator! we need to replace it with a new one.
-                    let emulator = LuaEmulator::default();
-                    let emulator_handle = LuaEmulator(emulator.0.clone());
-                    lua.globals().set("emulator", emulator);
-                    emulator_handle
-                }
-            };
-            let emulator = emulator.0.borrow();
-
             // create all of the widgets
-            let ram_widget = RamWidget::new(&emulator, &lua);
-            let registers_widget = RegistersWidget::new(&emulator, &lua);
+            let ram_widget = RamWidget::new(lua.clone(), emulator_handle.clone());
+            let registers_widget = RegistersWidget::new(lua.clone(), emulator_handle.clone());
             let control_status_registers_widget =
-                ControlStatusRegistersWidget::new(&emulator, &lua);
+                ControlStatusRegistersWidget::new(lua.clone(), emulator_handle.clone());
 
-            // Compute the areas in which the various widgets should be rendered.
+            // compute the areas in which the various widgets should be rendered
             let split = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(vec![Constraint::Fill(0), Constraint::Max(4)])
@@ -97,9 +109,9 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
 
             let prompt_area = split[1];
 
-            let registers_widgets_width = registers_widget
+            let registers_widgets_width = registers_widget_state
                 .minimum_width()
-                .max(control_status_registers_widget.minimum_width());
+                .max(control_status_registers_widget_state.minimum_width());
             let split = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints(vec![
@@ -113,8 +125,8 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
             let split = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(vec![
-                    Constraint::Max(registers_widget.minimum_height()),
-                    Constraint::Max(control_status_registers_widget.minimum_height()),
+                    Constraint::Max(registers_widget_state.minimum_height()),
+                    Constraint::Max(control_status_registers_widget_state.minimum_height()),
                 ])
                 .split(split[1]);
 
@@ -122,29 +134,38 @@ fn run(mut terminal: DefaultTerminal) -> io::Result<()> {
             let control_status_registers_area = split[1];
 
             // Render the widgets.
-            frame.render_widget(ram_widget, ram_area);
-            frame.render_widget(registers_widget, registers_area);
-            frame.render_widget(
+            frame.render_stateful_widget(ram_widget, ram_area, &mut ram_widget_state);
+            frame.render_stateful_widget(
+                registers_widget,
+                registers_area,
+                &mut registers_widget_state,
+            );
+            frame.render_stateful_widget(
                 control_status_registers_widget,
                 control_status_registers_area,
+                &mut control_status_registers_widget_state,
             );
-            frame.render_widget(&prompt_widget, prompt_area);
+            frame.render_stateful_widget(&prompt_widget, prompt_area, &mut prompt_widget_state);
         })?;
 
-        if let event::Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(())
-                    }
-                    KeyCode::Enter => {
-                        prompt_widget.evaluate_input_buffer(&lua);
-                    }
-                    KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        prompt_widget.evaluate_input_buffer(&lua);
-                    }
-                    _ => {
-                        prompt_widget.process_key_event(key);
+        // NOTE: this effectively caps the framerate of the tui at 30fps, which is entirely
+        // arbitrary, but probably sufficient
+        if let Ok(true) = event::poll(Duration::from_secs_f64(1.0/30.0)) {
+            if let event::Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(())
+                        }
+                        KeyCode::Enter => {
+                            prompt_widget.evaluate_input_buffer();
+                        }
+                        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            prompt_widget.evaluate_input_buffer();
+                        }
+                        _ => {
+                            prompt_widget.process_key_event(key);
+                        }
                     }
                 }
             }
