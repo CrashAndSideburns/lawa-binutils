@@ -10,7 +10,6 @@ use ratatui::style::{Color, Modifier, Style};
 use std::sync::{Arc, Mutex};
 
 /// a wrapper to allow lua interop for emulator::Emulator
-#[derive(Default)]
 pub struct LuaEmulator(pub Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for emulator::Ram
@@ -32,7 +31,6 @@ struct LuaMemoryProtectionControlRegisters(Arc<Mutex<Emulator>>);
 struct LuaMemoryProtectionAddressRegisters(Arc<Mutex<Emulator>>);
 
 /// a wrapper to allow lua interop for ratatui::style::Style
-#[derive(Default)]
 pub struct LuaStyle(Style);
 
 impl FromLua<'_> for LuaEmulator {
