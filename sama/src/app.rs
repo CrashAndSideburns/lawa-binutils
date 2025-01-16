@@ -6,7 +6,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 
 use directories::ProjectDirs;
 
-use mlua::{Lua, MultiValue, Table, Function};
+use mlua::{Function, Lua, MultiValue, Table};
 
 use ratatui::{
     buffer::Buffer,
@@ -196,9 +196,9 @@ impl App<'_> {
             if let Ok(style_handle) = lua.load("widgets.ram.style").eval::<Function>() {
                 for i in 0..amount {
                     let address = self.ram_view_offset + i;
-                        if let Ok(style) = style_handle.call::<_, LuaStyle>(address) {
-                            self.ram_style[usize::from(address)] = style.into();
-                        }
+                    if let Ok(style) = style_handle.call::<_, LuaStyle>(address) {
+                        self.ram_style[usize::from(address)] = style.into();
+                    }
                 }
             }
 
@@ -281,7 +281,7 @@ impl App<'_> {
                 }
                 KeyCode::Up => {
                     self.history_previous();
-                },
+                }
                 KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.history_previous();
                 }
@@ -343,8 +343,7 @@ impl App<'_> {
     fn history_previous(&mut self) {
         if self.history_index > 0 {
             self.history_index -= 1;
-            self.text_area =
-                TextArea::new(vec![self.history[self.history_index].clone()]);
+            self.text_area = TextArea::new(vec![self.history[self.history_index].clone()]);
             self.text_area.move_cursor(CursorMove::End);
         }
     }
